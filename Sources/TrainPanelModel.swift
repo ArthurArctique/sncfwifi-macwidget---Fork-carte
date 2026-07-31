@@ -52,6 +52,58 @@ struct TrainViewState {
 
     var arrivalOptions: [ArrivalOption]
     var selectedArrivalId: String?
+
+    // ── Champs ajoutés pour le multi-opérateur ────────────────────────────────
+    // Tous optionnels / avec valeur par défaut : le chemin SNCF les laisse tels quels et n'a
+    // donc rien à passer à l'init memberwise.
+
+    /// Opérateur dont proviennent les données (pilote le libellé et la couleur d'accent).
+    var operatorKind: TrainOperator = .sncf
+
+    /// Nom de la rame / du système embarqué (Eurostar : `system_name`, ex. "eurostar-blue-main").
+    var rameName: String?
+
+    // Détail de la connectivité sol↔train, exposé par la plateforme Icomera uniquement.
+
+    /// `false` si le train a perdu toute liaison montante.
+    var isOnline: Bool?
+    /// Meilleur RSSI parmi les modems actifs, en dBm.
+    var signalRSSI: Int?
+    /// Qualité dérivée du RSSI, 0…5 (même échelle que `wifiQuality` côté SNCF).
+    var signalQuality: Int?
+    /// Technologie du meilleur lien : "5G", "4G", "3G", "2G".
+    var linkTechnology: String?
+    /// Nombre de modems actifs (les rames en agrègent plusieurs).
+    var activeModemCount: Int?
+    /// Opérateurs mobiles utilisés, déduits des MCC/MNC (ex. ["Orange", "SFR", "Bouygues"]).
+    var modemOperators: [String] = []
+    /// Débit descendant maximal autorisé pour la session, en Mbit/s.
+    var bandwidthDownMbps: Double?
+    /// Temps de session restant, quand la plateforme en impose un.
+    var dataTimeLeft: String?
+}
+
+/// Mise en forme des volumes de données, partagée entre le panneau et la barre des menus.
+///
+/// Les deux plateformes n'ont pas les mêmes ordres de grandeur de quota (quelques dizaines de Mo
+/// côté SNCF, 1 Go côté Eurostar), d'où la bascule automatique d'unité. Le séparateur décimal
+/// suit la locale : virgule en français.
+enum DataVolume {
+    /// "16,9 Mo", "1,0 Go" — bascule en Go au-delà de 1000 Mo.
+    static func label(_ megabytes: Double) -> String {
+        if megabytes >= 1000 {
+            return String(format: "%.1f Go", locale: .current, megabytes / 1000)
+        }
+        return String(format: "%.1f Mo", locale: .current, megabytes)
+    }
+
+    /// Variante compacte pour la barre des menus : pas de décimale en Mo ("983 Mo", "1,4 Go").
+    static func compactLabel(_ megabytes: Double) -> String {
+        if megabytes >= 1000 {
+            return String(format: "%.1f Go", locale: .current, megabytes / 1000)
+        }
+        return String(format: "%.0f Mo", locale: .current, megabytes)
+    }
 }
 
 /// État global du panneau.
@@ -76,6 +128,8 @@ final class TrainStore: ObservableObject {
     var onQuit: () -> Void = {}
     var onSelectArrival: (String) -> Void = { _ in }
     var onToggleDemo: () -> Void = {}
+    /// Change l'opérateur simulé en mode démo (le serveur local sert les deux plateformes).
+    var onSetDemoOperator: (TrainOperator) -> Void = { _ in }
     var onOpenDemoPanel: () -> Void = {}
     var onCopyJSON: () -> Void = {}
     var onOpenAbout: () -> Void = {}

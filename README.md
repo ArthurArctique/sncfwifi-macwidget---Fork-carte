@@ -4,11 +4,30 @@
 [![GitHub Release](https://img.shields.io/github/v/release/antvgr/sncfwifi-macwidget?include_prereleases)](https://github.com/antvgr/sncfwifi-macwidget/releases/latest)
 [![Coding with AI](https://img.shields.io/badge/Coding_with-AI-blue?style=flat)](https://github.com/nuclearrockstone/coding-with-ai-badge)
 
-Un widget pour la barre de menus macOS qui exploite l'API du portail WiFi TGV Inoui pour afficher en temps réel les informations de votre trajet : gare suivante, vitesse, retard, données mobiles, etc.
+Un widget pour la barre de menus macOS qui exploite l'API des portails WiFi embarqués pour afficher en temps réel les informations de votre trajet : gare suivante, vitesse, retard, données mobiles, etc.
+
+Deux réseaux sont pris en charge : le **WiFi TGV Inoui** (`wifi.sncf`) et le **WiFi Eurostar** (`EurostarTrainsWiFi`, plateforme Icomera / `ombord.info`). L'opérateur est détecté automatiquement à partir du SSID.
 
 <p align="center">
   <img src="img/GIF1.gif" width="45%" />
 </p>
+
+<p align="center">
+  <em>TGV Inoui</em>
+</p>
+
+<!-- EMPLACEMENT CAPTURE EUROSTAR
+     Déposer le GIF / la capture dans img/GIF_EUROSTAR.gif, puis décommenter ce bloc.
+
+<p align="center">
+  <img src="img/GIF_EUROSTAR.gif" width="45%" />
+</p>
+
+<p align="center">
+  <em>Eurostar</em>
+</p>
+-->
+
 
 ---
 
@@ -32,17 +51,34 @@ Un widget pour la barre de menus macOS qui exploite l'API du portail WiFi TGV In
 
 ## Fonctionnalités 🛠
 
+- **Détection automatique de l'opérateur** : le SSID détermine la plateforme interrogée (aucun réglage à faire)
+- **Mode Démo** : serveur local pour tester les deux plateformes sans être dans un train
+
+### TGV Inoui
+
 - **Barre de menus** : affiche la prochaine gare, le temps restant, la vitesse et le retard éventuel en rotation
 - **Menu déroulant** : numéro de train, liste des arrêts avec progression, consommation de données WiFi
 - **Retard** : affichage tournant `⚠ +5min · Régulation du trafic` quand le train est en retard
-- **Mode Démo** : serveur local pour tester sans être dans un TGV
+- **Notification avant arrivée** : alerte 5, 10 ou 15 min avant la gare choisie
+
+### Eurostar
+
+- **Barre de menus** : vitesse et données restantes (`224 km/h · 983 Mo`), jauge de quota
+- **Menu déroulant** : nom de la rame, vitesse, détail de la connectivité sol↔train (génération
+  réseau, nombre de modems actifs, signal en dBm, opérateurs mobiles traversés, débit maximal),
+  nombre d'utilisateurs connectés et consommation de données
+
+> La plateforme Icomera n'expose **ni numéro de train, ni desserte, ni destination, ni retard, ni
+> heure d'arrivée**. La timeline des arrêts, le sélecteur de gare d'arrivée et la notification
+> avant arrivée sont donc masqués à bord d'un Eurostar.
 
 ---
 
 ## Prérequis ⚙️
 
 - macOS 11 (Big Sur) ou plus récent — Apple Silicon et Intel (binaire universel)
-- Connexion au réseau WiFi d'un TGV Inoui pour que l'API réponde
+- Connexion au WiFi d'un train pris en charge pour que l'API réponde :
+  `_SNCF_WIFI_INOUI`, `OUIFI`, `SNCF_WIFI_INTERCITES`, `WIFI_SNCF`, `_WIFI_LYRIA` ou `EurostarTrainsWiFi`
 - *(pour compiler)* Xcode Command Line Tools (`xcode-select --install`)
 
 ---
@@ -63,7 +99,7 @@ open SNCFWifi.app
 
 ## Mode Démo via serveur local 🧪
 
-Permet de simuler un trajet TGV sans connexion au WiFi du train.
+Permet de simuler un trajet sans connexion au WiFi du train.
 
 1. Lancer le serveur :
    ```bash
@@ -74,15 +110,30 @@ Permet de simuler un trajet TGV sans connexion au WiFi du train.
    - dans l'app : **Ouvrir le panneau Démo**
    - ou directement : `http://127.0.0.1:8787`
 3. Activer **Mode Démo** dans l'app.
+4. Choisir la plateforme à simuler : menu **🐞 → Opérateur simulé → TGV INOUI / Eurostar**.
+   Le serveur sert les deux jeux d'endpoints en permanence, ce réglage décide lequel est interrogé.
 
-Endpoints simulés :
+Endpoints simulés — TGV Inoui (JSON) :
 | Endpoint | Description |
 |---|---|
-| `GET /router/api/train/gps` | Position GPS |
+| `GET /router/api/train/gps` | Position GPS, vitesse en m/s |
 | `GET /router/api/train/progress` | Progression du trajet |
 | `GET /router/api/train/details` | Détails (arrêts, retard, numéro) |
 | `GET /router/api/bar/attendance` | Affluence au bar |
-| `GET /router/api/connection/statistics` | Consommation données |
+| `GET /router/api/connection/statistics` | Qualité WiFi et appareils connectés |
+| `GET /router/api/connection/status` | Consommation données (kB) |
+
+Endpoints simulés — Eurostar (JSONP, réponses enveloppées dans `( … );`) :
+| Endpoint | Description |
+|---|---|
+| `GET /api/jsonp/system/` | Identité de la rame (`system_name`) |
+| `GET /api/jsonp/connectivity/` | Liaisons sol↔train : modems, technologie, RSSI, opérateurs |
+| `GET /api/jsonp/users/` | Utilisateurs connectés / total |
+| `GET /api/jsonp/user/` | Consommation et quota de la session (octets), débits max |
+| `GET /api/jsonp/position/` | Position GPS, vitesse en m/s, cap, altitude |
+
+> Les deux plateformes expriment la **vitesse en m/s** et l'**altitude en mètres**. Les volumes de
+> données sont en **kB** côté SNCF et en **octets** côté Icomera.
 
 ---
 

@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import Combine
 
 /// Largeur fixe du panneau (style Centre de contrôle).
@@ -7,6 +8,25 @@ private let panelWidth: CGFloat = 300
 extension Color {
     /// Carmillon — couleur de marque SNCF / TGV INOUI (#7D206F).
     static let carmillon = Color(red: 125.0 / 255.0, green: 32.0 / 255.0, blue: 111.0 / 255.0)
+
+    /// Bleu Eurostar. Le bleu nuit de marque (#001A5E) se confond avec le fond en mode sombre,
+    /// d'où une variante éclaircie fournie dynamiquement par l'apparence système.
+    static let eurostarBlue = Color(NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return isDark
+            ? NSColor(srgbRed: 107.0 / 255.0, green: 153.0 / 255.0, blue: 1.0, alpha: 1.0)
+            : NSColor(srgbRed: 0.0, green: 26.0 / 255.0, blue: 94.0 / 255.0, alpha: 1.0)
+    })
+}
+
+extension TrainOperator {
+    /// Couleur d'accent du panneau, par opérateur.
+    var accent: Color {
+        switch self {
+        case .sncf:     return .carmillon
+        case .eurostar: return .eurostarBlue
+        }
+    }
 }
 
 // MARK: - Vue racine
@@ -64,12 +84,13 @@ private struct NotConnectedView: View {
                     .foregroundColor(.secondary)
                 Button("Ouvrir le panneau démo") { store.onOpenDemoPanel() }
             } else {
-                Text("Non connecté au WiFi SNCF inOui")
+                Text("Non connecté au WiFi d'un train")
                     .font(.headline)
                     .multilineTextAlignment(.center)
-                Text("(ou API du train indisponible)")
+                Text("SNCF inOui ou Eurostar (ou API du train indisponible)")
                     .font(.caption)
                     .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
             }
         }
         .frame(maxWidth: .infinity)
@@ -83,23 +104,36 @@ private struct NotConnectedView: View {
 private struct ConnectedView: View {
     let state: TrainViewState
 
+    private var accent: Color { state.operatorKind.accent }
+
+    /// Vrai dès qu'une des sections « réseau » a de quoi s'afficher.
+    private var hasNetworkSection: Bool {
+        state.wifiQuality != nil
+            || state.wifiDevices != nil
+            || state.dataConsumedMB != nil
+            || state.activeModemCount != nil
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                HeaderView(state: state)
+                HeaderView(state: state, accent: accent)
 
                 if !state.stops.isEmpty {
                     Divider()
-                    TimelineView(stops: state.stops)
+                    TimelineView(stops: state.stops, accent: accent)
                 }
 
-                if state.wifiQuality != nil || state.dataRatio != nil {
+                if hasNetworkSection {
                     Divider()
-                    if let quality = state.wifiQuality {
-                        WifiView(quality: quality, devices: state.wifiDevices)
+                    if state.wifiQuality != nil || state.wifiDevices != nil {
+                        WifiView(quality: state.wifiQuality, devices: state.wifiDevices, accent: accent)
                     }
-                    if let ratio = state.dataRatio {
-                        DataView(state: state, ratio: ratio)
+                    if state.activeModemCount != nil {
+                        ConnectivityView(state: state, accent: accent)
+                    }
+                    if state.dataConsumedMB != nil {
+                        DataView(state: state, accent: accent)
                     }
                 }
 
@@ -116,18 +150,33 @@ private struct ConnectedView: View {
 
 private struct HeaderView: View {
     let state: TrainViewState
+    let accent: Color
+
+    /// "TGV INOUI n° 6201" / "Eurostar" — le numéro n'existe que côté SNCF.
+    private var title: String {
+        let name = state.operatorKind.displayName
+        guard let number = state.trainNumber, !number.isEmpty else { return name }
+        return "\(name) n° \(number)"
+    }
+
+    /// Destination pour SNCF, nom de la rame pour Eurostar (seule identité disponible).
+    private var subtitle: String? {
+        if let dest = state.destination, !dest.isEmpty { return "→ \(dest)" }
+        if let rame = state.rameName, !rame.isEmpty { return rame }
+        return nil
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "tram.fill")
                     .font(.system(size: 18))
-                    .foregroundColor(.carmillon)
+                    .foregroundColor(accent)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(state.trainNumber.map { "TGV INOUI n° \($0)" } ?? "TGV INOUI")
+                    Text(title)
                         .font(.system(size: 14, weight: .semibold))
-                    if let dest = state.destination, !dest.isEmpty {
-                        Text("→ \(dest)")
+                    if let subtitle = subtitle {
+                        Text(subtitle)
                             .font(.system(size: 12))
                             .foregroundColor(.secondary)
                     }
@@ -136,7 +185,7 @@ private struct HeaderView: View {
                 if state.speedKmh > 0 {
                     HStack(spacing: 4) {
                         Image(systemName: "speedometer")
-                            .foregroundColor(.carmillon)
+                            .foregroundColor(accent)
                         Text("\(state.speedKmh) km/h")
                             .foregroundColor(.primary)
                     }
@@ -169,11 +218,13 @@ private struct HeaderView: View {
 
 private struct TimelineView: View {
     let stops: [StopRow]
+    let accent: Color
 
     var body: some View {
         VStack(spacing: 0) {
             ForEach(Array(stops.enumerated()), id: \.element.id) { index, stop in
                 StopRowView(stop: stop,
+                            accent: accent,
                             isFirst: index == 0,
                             isLast: index == stops.count - 1)
             }
@@ -183,13 +234,14 @@ private struct TimelineView: View {
 
 private struct StopRowView: View {
     let stop: StopRow
+    let accent: Color
     let isFirst: Bool
     let isLast: Bool
 
     private var dotColor: Color {
         switch stop.status {
-        case .passed:   return .carmillon
-        case .current:  return .carmillon
+        case .passed:   return accent
+        case .current:  return accent
         case .upcoming: return .secondary
         }
     }
@@ -244,22 +296,31 @@ private struct StopRowView: View {
 // MARK: - Qualité WiFi
 
 private struct WifiView: View {
-    let quality: Int
+    /// Absente côté Eurostar : la qualité radio y est détaillée par `ConnectivityView`.
+    let quality: Int?
     let devices: Int?
+    let accent: Color
 
     var body: some View {
         HStack(spacing: 16) {
-            MetricPill(symbol: quality >= 3 ? "wifi" : "wifi.exclamationmark",
-                       text: wifiText,
-                       tint: quality < 3 ? .orange : .carmillon)
+            MetricPill(symbol: symbol, text: wifiText, tint: tint)
             Spacer(minLength: 0)
         }
     }
 
+    private var isDegraded: Bool {
+        guard let quality else { return false }
+        return quality < 3
+    }
+
+    private var symbol: String { isDegraded ? "wifi.exclamationmark" : "wifi" }
+    private var tint: Color { isDegraded ? .orange : accent }
+
     private var wifiText: String {
-        var t = "WiFi \(quality)/5"
-        if let d = devices { t += " · \(d) pers." }
-        return t
+        var parts: [String] = []
+        if let quality { parts.append("WiFi \(quality)/5") }
+        if let devices { parts.append("\(devices) pers.") }
+        return parts.joined(separator: " · ")
     }
 }
 
@@ -277,11 +338,80 @@ private struct MetricPill: View {
     }
 }
 
+// MARK: - Connectivité sol↔train (plateforme Icomera / Eurostar)
+
+/// Détail des liaisons montantes : la rame agrège plusieurs modems cellulaires, chacun sur un
+/// opérateur différent. L'API SNCF n'expose rien d'équivalent, cette section reste donc masquée
+/// à bord d'un TGV.
+private struct ConnectivityView: View {
+    let state: TrainViewState
+    let accent: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 5) {
+                Image(systemName: symbol).foregroundColor(tint)
+                Text(headline).foregroundColor(.primary)
+            }
+            .font(.system(size: 12, weight: .medium))
+
+            if let detail = signalDetail {
+                Text(detail)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+
+            if !state.modemOperators.isEmpty {
+                Text(state.modemOperators.joined(separator: " · "))
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+
+            if let mbps = state.bandwidthDownMbps {
+                Text(String(format: "Débit max %.0f Mbit/s", mbps))
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+
+    private var isOffline: Bool { state.isOnline == false }
+
+    private var symbol: String {
+        if isOffline { return "antenna.radiowaves.left.and.right.slash" }
+        return "antenna.radiowaves.left.and.right"
+    }
+
+    private var tint: Color {
+        if isOffline { return .orange }
+        if let quality = state.signalQuality, quality < 3 { return .orange }
+        return accent
+    }
+
+    private var headline: String {
+        if isOffline { return "Liaison sol interrompue" }
+
+        var parts: [String] = []
+        parts.append(state.linkTechnology.map { "Réseau \($0)" } ?? "Liaison mobile")
+        if let count = state.activeModemCount, count > 0 {
+            parts.append(count > 1 ? "\(count) modems actifs" : "1 modem actif")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private var signalDetail: String? {
+        var parts: [String] = []
+        if let rssi = state.signalRSSI { parts.append("Signal \(rssi) dBm") }
+        if let quality = state.signalQuality { parts.append("\(quality)/5") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+}
+
 // MARK: - Consommation data
 
 private struct DataView: View {
     let state: TrainViewState
-    let ratio: Double
+    let accent: Color
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -289,23 +419,38 @@ private struct DataView: View {
                 Label("Données", systemImage: "arrow.up.arrow.down.circle")
                     .font(.system(size: 12, weight: .medium))
                 Spacer()
-                Text("\(Int((ratio * 100).rounded())) %")
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
+                if let ratio = state.dataRatio {
+                    Text("\(Int((ratio * 100).rounded())) %")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
             }
-            ProgressView(value: min(max(ratio, 0), 1))
-                .accentColor(ratio > 0.85 ? .red : .carmillon)
-            if let consumed = state.dataConsumedMB, let total = state.dataTotalMB {
-                Text(usageLine(consumed: consumed, total: total, reset: state.dataResetTime))
+            // Sans quota connu, on affiche le volume consommé sans jauge.
+            if let ratio = state.dataRatio {
+                ProgressView(value: min(max(ratio, 0), 1))
+                    .accentColor(ratio > 0.85 ? .red : accent)
+            }
+            if let line = usageLine {
+                Text(line)
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
             }
         }
     }
 
-    private func usageLine(consumed: Double, total: Double, reset: String?) -> String {
-        var t = String(format: "%.1f / %.1f Mo utilisés", consumed, total)
-        if let reset = reset { t += " · reset \(reset)" }
+    /// "16,9 Mo / 1,0 Go utilisés · reset 14:05" — les unités s'adaptent au volume, les deux
+    /// plateformes n'ayant pas du tout les mêmes ordres de grandeur de quota.
+    private var usageLine: String? {
+        guard let consumed = state.dataConsumedMB else { return nil }
+
+        var t: String
+        if let total = state.dataTotalMB {
+            t = "\(DataVolume.label(consumed)) / \(DataVolume.label(total)) utilisés"
+        } else {
+            t = "\(DataVolume.label(consumed)) utilisés"
+        }
+        if let reset = state.dataResetTime { t += " · reset \(reset)" }
+        if let timeLeft = state.dataTimeLeft { t += " · reste \(timeLeft)" }
         return t
     }
 }
@@ -354,6 +499,7 @@ private struct FooterView: View {
     @AppStorage("notifyBeforeArrivalMinutes") private var notifyMinutes = 10
     @AppStorage("notifyBeforeArrivalTarget") private var notifyTarget = "selectedArrival"
     @AppStorage("isDemoMode") private var demoMode = false
+    @AppStorage("demoOperator") private var demoOperator = TrainOperator.sncf.rawValue
 
     private let leadTimes = [5, 10, 15]
 
@@ -381,6 +527,14 @@ private struct FooterView: View {
         return nil
     }
 
+    /// Les réglages d'arrivée n'ont de sens que si l'opérateur fournit une desserte : la
+    /// plateforme Eurostar n'expose aucun horaire, on masque donc ces entrées à bord.
+    private var supportsArrivalNotifications: Bool {
+        if case let .connected(state) = store.state { return !state.arrivalOptions.isEmpty }
+        // Hors connexion, on laisse l'utilisateur régler ses préférences.
+        return true
+    }
+
     private var settingsMenu: some View {
         Menu {
             if let arrival = arrival {
@@ -396,37 +550,41 @@ private struct FooterView: View {
                 Divider()
             }
 
-            Button {
-                notifyEnabled.toggle()
-                store.onSettingsChanged()
-            } label: {
-                checkLabel("Notification avant arrivée", on: notifyEnabled)
-            }
+            if supportsArrivalNotifications {
+                Button {
+                    notifyEnabled.toggle()
+                    store.onSettingsChanged()
+                } label: {
+                    checkLabel("Notification avant arrivée", on: notifyEnabled)
+                }
 
-            Menu("Délai de notification") {
-                ForEach(leadTimes, id: \.self) { minutes in
-                    Button {
-                        notifyMinutes = minutes
-                        store.onSettingsChanged()
-                    } label: {
-                        checkLabel("\(minutes) min", on: notifyMinutes == minutes)
+                Menu("Délai de notification") {
+                    ForEach(leadTimes, id: \.self) { minutes in
+                        Button {
+                            notifyMinutes = minutes
+                            store.onSettingsChanged()
+                        } label: {
+                            checkLabel("\(minutes) min", on: notifyMinutes == minutes)
+                        }
                     }
                 }
-            }
 
-            Menu("Type de notification") {
-                Button {
-                    notifyTarget = "selectedArrival"
-                    store.onSettingsChanged()
-                } label: {
-                    checkLabel("Gare d'arrivée sélectionnée", on: notifyTarget == "selectedArrival")
+                Menu("Type de notification") {
+                    Button {
+                        notifyTarget = "selectedArrival"
+                        store.onSettingsChanged()
+                    } label: {
+                        checkLabel("Gare d'arrivée sélectionnée", on: notifyTarget == "selectedArrival")
+                    }
+                    Button {
+                        notifyTarget = "nextStop"
+                        store.onSettingsChanged()
+                    } label: {
+                        checkLabel("Prochaine gare", on: notifyTarget == "nextStop")
+                    }
                 }
-                Button {
-                    notifyTarget = "nextStop"
-                    store.onSettingsChanged()
-                } label: {
-                    checkLabel("Prochaine gare", on: notifyTarget == "nextStop")
-                }
+            } else {
+                Text("Aucun horaire fourni par cet opérateur")
             }
         } label: {
             Image(systemName: "gearshape.fill")
@@ -442,6 +600,15 @@ private struct FooterView: View {
                 store.onToggleDemo()
             } label: {
                 checkLabel("Mode Démo (serveur local)", on: demoMode)
+            }
+            Menu("Opérateur simulé") {
+                ForEach(TrainOperator.allCases, id: \.rawValue) { op in
+                    Button {
+                        store.onSetDemoOperator(op)
+                    } label: {
+                        checkLabel(op.displayName, on: demoOperator == op.rawValue)
+                    }
+                }
             }
             Button("Ouvrir le panneau démo") { store.onOpenDemoPanel() }
             Divider()

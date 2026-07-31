@@ -10,6 +10,7 @@ final class MenuBarController: NSObject {
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let apiClient  = TrainAPIClient()
+    private let eurostarClient = EurostarAPIClient()
     private var timer: Timer?
     private var clockTimer: Timer?
     private var lastRawData: [String: Any]?
@@ -27,6 +28,10 @@ final class MenuBarController: NSObject {
     private var cachedStoppedStation: String = ""
     private var cachedDelayMins: Int = 0
     private var cachedDelayCause: String = ""
+    // Opérateur du dernier rafraîchissement réussi : détermine la composition du titre.
+    private var cachedOperator: TrainOperator = .sncf
+    private var cachedDataRemainingMB: Double?
+    private var cachedHasPosition: Bool = false
     private static let resetTimeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
@@ -35,6 +40,10 @@ final class MenuBarController: NSObject {
     }()
     private let locationManager = CLLocationManager()
     private let notificationCenter = UNUserNotificationCenter.current()
+
+    /// Dernier opérateur ayant répondu : sert à sonder la bonne plateforme en premier quand le
+    /// SSID est indisponible (droit Localisation refusé).
+    private let lastKnownOperatorKey = "lastKnownOperator"
 
     private let notifyBeforeArrivalEnabledKey = "notifyBeforeArrivalEnabled"
     private let notifyBeforeArrivalMinutesKey = "notifyBeforeArrivalMinutes"
@@ -99,6 +108,10 @@ final class MenuBarController: NSObject {
             self?.refresh()
         }
         store.onToggleDemo = { [weak self] in self?.toggleDemoMode() }
+        store.onSetDemoOperator = { [weak self] op in
+            MockTrainData.shared.demoOperator = op
+            self?.refresh()
+        }
         store.onOpenDemoPanel = { [weak self] in self?.openDemoControlPanel() }
         store.onCopyJSON = { [weak self] in self?.copyDebugData() }
         store.onOpenAbout = { [weak self] in self?.openAbout() }
@@ -134,6 +147,11 @@ final class MenuBarController: NSObject {
     }
 
     private func redrawNormalTitle() {
+        if cachedOperator == .eurostar {
+            applyTitleImage(text: eurostarTitleText())
+            return
+        }
+
         let text: String
         if cachedIsStopped && !cachedStoppedStation.isEmpty {
             text = "En gare de \(cachedStoppedStation)"
@@ -156,6 +174,19 @@ final class MenuBarController: NSObject {
         applyTitleImage(text: text)
     }
 
+    /// Titre Eurostar : vitesse + data restante. La plateforme Icomera ne fournit ni destination
+    /// ni heure d'arrivée, il n'y a donc rien d'autre à faire tenir dans la barre des menus.
+    private func eurostarTitleText() -> String {
+        var parts: [String] = []
+        if cachedHasPosition {
+            parts.append(cachedSpeed > 0 ? "\(cachedSpeed) km/h" : "À l'arrêt")
+        }
+        if let remaining = cachedDataRemainingMB {
+            parts.append(DataVolume.compactLabel(remaining))
+        }
+        return parts.joined(separator: " · ")
+    }
+
     private func applyTitleImage(text: String) {
         guard !text.isEmpty,
               let img = StatusBarImageGenerator.draw(text: text, progress: cachedGlobalProgress)
@@ -168,42 +199,80 @@ final class MenuBarController: NSObject {
     // MARK: - Refresh
 
     @objc func refresh() {
-        if !MockTrainData.shared.isEnabled {
-            let ssid = CWWiFiClient.shared().interface()?.ssid() ?? ""
-            
-            // Liste stricte des réseaux Wi-Fi SNCF / TGV
-            let knownSNCFNetworks = [
-                "_SNCF_WIFI_INOUI",
-                "OUIFI",
-                "SNCF_WIFI_INTERCITES",
-                "WIFI_SNCF",
-                "_WIFI_LYRIA"
-            ]
-            
-            // On vérifie le nom du réseau s'il n'est pas vide (cas avec droits de localisation ou vieux macOS).
-            if !ssid.isEmpty && !knownSNCFNetworks.contains(ssid) {
-                // Pas sur le wifi du train : on arrête ici pour économiser la batterie
-                DispatchQueue.main.async { [weak self] in
-                    guard let self else { return }
-                    self.statusItem.button?.image = NSImage(systemSymbolName: "wifi.slash", accessibilityDescription: nil)
-                    self.statusItem.button?.title = ""
-                    self.store.lastRefreshDate = Date()
-                    self.store.state = .notConnected(demoMode: MockTrainData.shared.isEnabled)
-                }
-                return
-            }
+        if MockTrainData.shared.isEnabled {
+            load(operator: MockTrainData.shared.demoOperator)
+            return
         }
 
+        let ssid = CWWiFiClient.shared().interface()?.ssid() ?? ""
+
+        if ssid.isEmpty {
+            // SSID indisponible (droit Localisation refusé, ou macOS antérieur à 14.4) : on ne
+            // peut pas identifier le réseau, donc on sonde les plateformes en commençant par
+            // celle qui a répondu la dernière fois. On s'arrête dès qu'une répond.
+            advance(fallbacks: probeOrder())
+            return
+        }
+
+        guard let detected = TrainOperator.matching(ssid: ssid) else {
+            // Pas sur le wifi d'un train connu : on arrête ici pour économiser la batterie.
+            DispatchQueue.main.async { [weak self] in self?.showNotConnected() }
+            return
+        }
+
+        load(operator: detected)
+    }
+
+    /// Ordre de sondage quand le SSID est inconnu : dernier opérateur connu d'abord.
+    private func probeOrder() -> [TrainOperator] {
+        guard let last = lastKnownOperator else { return TrainOperator.allCases }
+        return [last] + TrainOperator.allCases.filter { $0 != last }
+    }
+
+    /// Interroge la plateforme de `op`. Si elle ne répond rien d'exploitable, essaie `fallbacks`.
+    private func load(operator op: TrainOperator, fallbacks: [TrainOperator] = []) {
+        switch op {
+        case .sncf:      loadSNCF(fallbacks: fallbacks)
+        case .eurostar:  loadEurostar(fallbacks: fallbacks)
+        }
+    }
+
+    /// Passe au prochain opérateur à sonder, ou affiche l'état déconnecté s'il n'y en a plus.
+    private func advance(fallbacks: [TrainOperator]) {
+        guard let next = fallbacks.first else {
+            showNotConnected()
+            return
+        }
+        load(operator: next, fallbacks: Array(fallbacks.dropFirst()))
+    }
+
+    private func showNotConnected() {
+        statusItem.button?.image = NSImage(systemSymbolName: "wifi.slash", accessibilityDescription: nil)
+        statusItem.button?.title = ""
+        store.lastRefreshDate = Date()
+        store.state = .notConnected(demoMode: MockTrainData.shared.isEnabled)
+    }
+
+    /// Snapshot debug commun (SSID, mode démo, opérateur), enrichi par chaque plateforme.
+    private func debugSnapshotBase(operator op: TrainOperator) -> [String: Any] {
+        let ssidInfo = currentSSIDInfo()
+        return [
+            "operator": op.rawValue,
+            "ssid": ssidInfo.ssid,
+            "ssidStatus": ssidInfo.status,
+            "demoMode": MockTrainData.shared.isEnabled,
+            "demoServerURL": MockTrainData.shared.baseURLString
+        ]
+    }
+
+    // MARK: - Refresh SNCF
+
+    private func loadSNCF(fallbacks: [TrainOperator]) {
         apiClient.fetchAll { [weak self] gps, details, bar, stats, status in
             guard let self else { return }
 
             // Conserver un snapshot debug même si l'API est indisponible.
-            var snapshot: [String: Any] = [:]
-            let ssidInfo = self.currentSSIDInfo()
-            snapshot["ssid"] = ssidInfo.ssid
-            snapshot["ssidStatus"] = ssidInfo.status
-            snapshot["demoMode"] = MockTrainData.shared.isEnabled
-            snapshot["demoServerURL"] = MockTrainData.shared.baseURLString
+            var snapshot = self.debugSnapshotBase(operator: .sncf)
             if let g = gps { snapshot["gps"] = g }
             if let d = details { snapshot["details"] = d }
             if let b = bar { snapshot["bar"] = b }
@@ -212,29 +281,93 @@ final class MenuBarController: NSObject {
             self.lastRawData = snapshot
 
             if gps == nil && details == nil {
-                self.statusItem.button?.image = NSImage(systemSymbolName: "wifi.slash", accessibilityDescription: nil)
+                self.advance(fallbacks: fallbacks)
+                return
+            }
+
+            self.lastKnownOperator = .sncf
+            self.cachedOperator = .sncf
+            self.cachedDataRemainingMB = nil
+            self.cachedHasPosition = gps != nil
+
+            let (title, customImage, viewState) = self.buildTrainState(gps: gps, details: details, bar: bar, stats: stats, status: status)
+            if let img = customImage {
                 self.statusItem.button?.title = ""
-                self.store.lastRefreshDate = Date()
-                self.store.state = .notConnected(demoMode: MockTrainData.shared.isEnabled)
+                self.statusItem.button?.image = img
+                self.statusItem.button?.imagePosition = .imageOnly
             } else {
-                let (title, customImage, viewState) = self.buildTrainState(gps: gps, details: details, bar: bar, stats: stats, status: status)
-                if let img = customImage {
-                    self.statusItem.button?.title = ""
-                    self.statusItem.button?.image = img
-                    self.statusItem.button?.imagePosition = .imageOnly
-                } else {
-                    self.statusItem.button?.image = NSImage(systemSymbolName: "tram.fill", accessibilityDescription: nil)
-                    self.statusItem.button?.imagePosition = .imageLeft
-                    self.statusItem.button?.title = title.isEmpty ? "" : " \(title)"
-                }
-                self.store.lastRefreshDate = Date()
-                self.store.state = .connected(viewState)
-                // Applique le texte delay-aware (rotation) après avoir peuplé le cache
-                if self.cachedArrivalDate != nil || self.cachedIsStopped {
-                    self.redrawTitle()
-                }
+                self.statusItem.button?.image = NSImage(systemSymbolName: "tram.fill", accessibilityDescription: nil)
+                self.statusItem.button?.imagePosition = .imageLeft
+                self.statusItem.button?.title = title.isEmpty ? "" : " \(title)"
+            }
+            self.store.lastRefreshDate = Date()
+            self.store.state = .connected(viewState)
+            // Applique le texte delay-aware (rotation) après avoir peuplé le cache
+            if self.cachedArrivalDate != nil || self.cachedIsStopped {
+                self.redrawTitle()
             }
         }
+    }
+
+    // MARK: - Refresh Eurostar
+
+    private func loadEurostar(fallbacks: [TrainOperator]) {
+        eurostarClient.fetchAll { [weak self] system, connectivity, users, user, position in
+            guard let self else { return }
+
+            var snapshot = self.debugSnapshotBase(operator: .eurostar)
+            if let s = system { snapshot["system"] = s }
+            if let c = connectivity { snapshot["connectivity"] = c }
+            if let u = users { snapshot["users"] = u }
+            if let u = user { snapshot["user"] = u }
+            if let p = position { snapshot["position"] = p }
+            self.lastRawData = snapshot
+
+            guard EurostarStateBuilder.hasUsableData(connectivity: connectivity, position: position, user: user) else {
+                self.advance(fallbacks: fallbacks)
+                return
+            }
+
+            let viewState = EurostarStateBuilder.build(system: system,
+                                                       connectivity: connectivity,
+                                                       users: users,
+                                                       user: user,
+                                                       position: position)
+
+            self.lastKnownOperator = .eurostar
+            self.applyEurostarCache(viewState, hasPosition: position != nil)
+
+            let text = self.eurostarTitleText()
+            if !text.isEmpty,
+               let img = StatusBarImageGenerator.draw(text: text, progress: viewState.globalProgress) {
+                self.statusItem.button?.title = ""
+                self.statusItem.button?.image = img
+                self.statusItem.button?.imagePosition = .imageOnly
+            } else {
+                self.statusItem.button?.image = NSImage(systemSymbolName: "tram.fill", accessibilityDescription: nil)
+                self.statusItem.button?.imagePosition = .imageLeft
+                self.statusItem.button?.title = ""
+            }
+
+            self.store.lastRefreshDate = Date()
+            self.store.state = .connected(viewState)
+        }
+    }
+
+    /// Aligne le cache du redraw périodique sur l'état Eurostar. Les champs propres à la desserte
+    /// SNCF sont remis à zéro pour que le `clockTimer` ne réutilise pas un trajet précédent.
+    private func applyEurostarCache(_ state: TrainViewState, hasPosition: Bool) {
+        cachedOperator = .eurostar
+        cachedGlobalProgress = state.globalProgress
+        cachedSpeed = state.speedKmh
+        cachedDataRemainingMB = state.dataRemainingMB
+        cachedHasPosition = hasPosition
+        cachedArrivalDate = nil
+        cachedDestShort = ""
+        cachedIsStopped = false
+        cachedStoppedStation = ""
+        cachedDelayMins = 0
+        cachedDelayCause = ""
     }
 
     // MARK: - Construction de l'état du train (modèle de vue)
@@ -245,9 +378,9 @@ final class MenuBarController: NSObject {
                                  stats: [String: Any]?,
                                  status: [String: Any]?) -> (String, NSImage?, TrainViewState) {
 
-        // L'API retourne la vitesse en m/s, on convertit en km/h
-        let speedRaw = asDouble(gps?["speed"]) ?? 0.0
-        let speed = Int(speedRaw * 3.6)
+        // L'API retourne la vitesse en m/s, on convertit en km/h (conversion bornée : cf.
+        // ValueCoercion, `Int(_:)` sur un Double non fini est une erreur fatale).
+        let speed = speedKmh(fromMetersPerSecond: gps?["speed"])
 
         var trainNumber:       String?
         var destinationLabel:  String?
@@ -264,8 +397,8 @@ final class MenuBarController: NSObject {
         let distanceToStop: ([String: Any]) -> Double = { stop in
             guard let lat = currentLat, let lon = currentLon,
                   let coords = stop["coordinates"] as? [String: Any],
-                  let sLat = self.asDouble(coords["latitude"]),
-                  let sLon = self.asDouble(coords["longitude"]) else {
+                  let sLat = asDouble(coords["latitude"]),
+                  let sLon = asDouble(coords["longitude"]) else {
                 return 999999.0
             }
             return CLLocation(latitude: lat, longitude: lon).distance(from: CLLocation(latitude: sLat, longitude: sLon))
@@ -469,12 +602,7 @@ final class MenuBarController: NSObject {
         }
 
         // ── Sauvegarde des données brutes pour le mode Debug ────────────
-        var rawData: [String: Any] = [:]
-        let ssidInfo = currentSSIDInfo()
-        rawData["ssid"] = ssidInfo.ssid
-        rawData["ssidStatus"] = ssidInfo.status
-        rawData["demoMode"] = MockTrainData.shared.isEnabled
-        rawData["demoServerURL"] = MockTrainData.shared.baseURLString
+        var rawData = debugSnapshotBase(operator: .sncf)
         if let g = gps { rawData["gps"] = g }
         if let d = details { rawData["details"] = d }
         if let b = bar { rawData["bar"] = b }
@@ -626,38 +754,8 @@ final class MenuBarController: NSObject {
         NSWorkspace.shared.open(url)
     }
 
-    // MARK: - Conversions sûres
-
-    private func safeInt(_ value: Any?) -> Int {
-        guard let value else { return 0 }
-        if let n = value as? NSNumber { return n.intValue }
-        if let s = value as? String, let d = Double(s) { return Int(d) }
-        return 0
-    }
-
-    private func asDouble(_ value: Any?) -> Double? {
-        guard let value else { return nil }
-        if let n = value as? NSNumber { return n.doubleValue }
-        if let s = value as? String    { return Double(s) }
-        return nil
-    }
-
-    private func asBool(_ value: Any?) -> Bool? {
-        guard let value else { return nil }
-        if let b = value as? Bool { return b }
-        if let n = value as? NSNumber { return n.intValue != 0 }
-        if let s = value as? String {
-            switch s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-            case "true", "1", "yes", "oui":
-                return true
-            case "false", "0", "no", "non":
-                return false
-            default:
-                return nil
-            }
-        }
-        return nil
-    }
+    // Les conversions sûres (`safeInt`, `asDouble`, `asBool`…) vivent dans ValueCoercion.swift,
+    // partagées avec le builder d'état Eurostar.
 
     private var isBeforeArrivalNotificationEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: notifyBeforeArrivalEnabledKey) }
@@ -673,6 +771,14 @@ final class MenuBarController: NSObject {
             let safeValue = allowedNotificationLeadTimes.contains(newValue) ? newValue : 10
             UserDefaults.standard.set(safeValue, forKey: notifyBeforeArrivalMinutesKey)
         }
+    }
+
+    private var lastKnownOperator: TrainOperator? {
+        get {
+            UserDefaults.standard.string(forKey: lastKnownOperatorKey)
+                .flatMap(TrainOperator.init(rawValue:))
+        }
+        set { UserDefaults.standard.set(newValue?.rawValue, forKey: lastKnownOperatorKey) }
     }
 
     private var lastArrivalNotifiedStopId: String? {
