@@ -27,6 +27,17 @@ extension TrainOperator {
         case .eurostar: return .eurostarBlue
         }
     }
+
+    /// Logo de marque déposé dans `Resources/Logos/`, `nil` si le fichier est absent.
+    ///
+    /// Convention : `logo-<rawValue>.png` (+ `@2x`), et `logo-<rawValue>-dark.png` pour une
+    /// variante mode sombre facultative. Ajouter une compagnie se limite donc à ajouter un cas à
+    /// `TrainOperator` et à déposer le fichier — aucun code à écrire. Les logos étant des marques
+    /// déposées, leur absence est un cas normal : l'en-tête retombe alors sur l'icône générique.
+    func logo(dark: Bool) -> NSImage? {
+        if dark, let variant = NSImage(named: "logo-\(rawValue)-dark") { return variant }
+        return NSImage(named: "logo-\(rawValue)")
+    }
 }
 
 // MARK: - Vue racine
@@ -152,11 +163,23 @@ private struct HeaderView: View {
     let state: TrainViewState
     let accent: Color
 
-    /// "TGV INOUI n° 6201" / "Eurostar" — le numéro n'existe que côté SNCF.
-    private var title: String {
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// Hauteur de rendu du logo, calée sur celle de l'icône `tram.fill` qu'il remplace.
+    private let logoHeight: CGFloat = 20
+
+    private var logo: NSImage? {
+        state.operatorKind.logo(dark: colorScheme == .dark)
+    }
+
+    /// Quand le logo porte déjà l'identité de la compagnie, seul le numéro de train subsiste —
+    /// et Eurostar n'en expose aucun, l'en-tête se réduit alors au logo.
+    /// Sans logo, on garde le libellé complet : "TGV INOUI n° 6201" / "Eurostar".
+    private var title: String? {
+        let number = state.trainNumber.flatMap { $0.isEmpty ? nil : $0 }
+        guard logo == nil else { return number.map { "n° \($0)" } }
         let name = state.operatorKind.displayName
-        guard let number = state.trainNumber, !number.isEmpty else { return name }
-        return "\(name) n° \(number)"
+        return number.map { "\(name) n° \($0)" } ?? name
     }
 
     /// Destination pour SNCF, nom de la rame pour Eurostar (seule identité disponible).
@@ -169,12 +192,23 @@ private struct HeaderView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "tram.fill")
-                    .font(.system(size: 18))
-                    .foregroundColor(accent)
+                if let logo = logo {
+                    Image(nsImage: logo)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(height: logoHeight)
+                        // Le nom disparaît du texte : on le conserve pour VoiceOver.
+                        .accessibilityLabel(state.operatorKind.displayName)
+                } else {
+                    Image(systemName: "tram.fill")
+                        .font(.system(size: 18))
+                        .foregroundColor(accent)
+                }
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(title)
-                        .font(.system(size: 14, weight: .semibold))
+                    if let title = title {
+                        Text(title)
+                            .font(.system(size: 14, weight: .semibold))
+                    }
                     if let subtitle = subtitle {
                         Text(subtitle)
                             .font(.system(size: 12))

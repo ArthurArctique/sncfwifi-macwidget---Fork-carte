@@ -74,6 +74,27 @@ Deux réseaux sont pris en charge : le **WiFi TGV Inoui** (`wifi.sncf`) et le **
 
 ---
 
+## Logos des compagnies 🎨
+
+L'en-tête du panneau peut afficher le **logo de la compagnie** à la place de l'icône 🚋 et du nom
+en toutes lettres (seul le numéro de train reste à côté). Les logos ne sont pas fournis dans le
+dépôt : déposez-les vous-même dans `Resources/Logos/`, `build.sh` les embarque automatiquement.
+
+| Fichier | Rôle |
+|---|---|
+| `logo-sncf.png` | Logo TGV INOUI |
+| `logo-eurostar.png` | Logo Eurostar |
+| `logo-<compagnie>@2x.png` | Variante Retina (facultative) |
+| `logo-<compagnie>-dark.png` | Variante mode sombre (facultative) |
+
+PNG à fond transparent (hauteur utile ~40 px) ou PDF vectoriel. **Le SVG n'est pas pris en
+charge** : AppKit ne sait pas le charger et le projet compile sans *asset catalog* Xcode.
+
+Tout est facultatif : sans fichier, l'en-tête retombe sur l'icône 🚋 teintée et le nom de la
+compagnie. Voir [`Resources/Logos/README.md`](Resources/Logos/README.md) pour le détail.
+
+---
+
 ## Prérequis ⚙️
 
 - macOS 11 (Big Sur) ou plus récent — Apple Silicon et Intel (binaire universel)
