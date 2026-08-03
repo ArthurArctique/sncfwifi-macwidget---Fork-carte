@@ -30,6 +30,24 @@ Un widget pour la barre de menus macOS qui exploite l'API du portail WiFi TGV In
 
 ---
 
+## Installation via Homebrew 🍺
+
+```bash
+brew tap antvgr/sncfwifi https://github.com/antvgr/sncfwifi-macwidget
+brew install --cask sncfwifi
+```
+
+Mise à jour vers la dernière version :
+
+```bash
+brew reinstall --cask sncfwifi
+```
+
+> L'app étant signée en ad-hoc, si macOS la bloque au premier lancement :
+> `xattr -dr com.apple.quarantine /Applications/SNCFWifi.app` (ou clic droit → **Ouvrir**).
+
+---
+
 ## Fonctionnalités 🛠
 
 - **Barre de menus** : affiche la prochaine gare, le temps restant, la vitesse et le retard éventuel en rotation
