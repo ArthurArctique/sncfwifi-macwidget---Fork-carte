@@ -5,9 +5,14 @@ import Combine
 /// Largeur fixe du panneau (style Centre de contrôle).
 private let panelWidth: CGFloat = 300
 
+extension NSColor {
+    /// Carmillon — couleur de marque SNCF / TGV INOUI (#7D206F). Déclaré ici plutôt qu'en `Color`
+    /// parce que MapKit (tracé du trajet, marqueurs) travaille en `NSColor`.
+    static let carmillon = NSColor(srgbRed: 125.0 / 255.0, green: 32.0 / 255.0, blue: 111.0 / 255.0, alpha: 1)
+}
+
 extension Color {
-    /// Carmillon — couleur de marque SNCF / TGV INOUI (#7D206F).
-    static let carmillon = Color(red: 125.0 / 255.0, green: 32.0 / 255.0, blue: 111.0 / 255.0)
+    static let carmillon = Color(NSColor.carmillon)
 
     /// Bleu Eurostar. Le bleu nuit de marque (#001A5E) se confond avec le fond en mode sombre,
     /// d'où une variante éclaircie fournie dynamiquement par l'apparence système.
@@ -44,21 +49,29 @@ extension TrainOperator {
 
 struct TrainPanelView: View {
     @EnvironmentObject var store: TrainStore
+    @EnvironmentObject var mapModel: TrainMapModel
 
     var body: some View {
-        VStack(spacing: 0) {
-            switch store.state {
-            case .loading:
-                LoadingView()
-            case .notConnected(let demoMode):
-                NotConnectedView(demoMode: demoMode)
-            case .connected(let state):
-                ConnectedView(state: state)
+        // La carte prend toute la place du popover : c'est une bascule, pas une fenêtre à part.
+        if store.showsMap, case .connected(let state) = store.state {
+            TrainMapView(model: mapModel,
+                         accent: state.operatorKind.accent,
+                         onBack: { store.showsMap = false })
+        } else {
+            VStack(spacing: 0) {
+                switch store.state {
+                case .loading:
+                    LoadingView()
+                case .notConnected(let demoMode):
+                    NotConnectedView(demoMode: demoMode)
+                case .connected(let state):
+                    ConnectedView(state: state)
+                }
+                Divider()
+                FooterView()
             }
-            Divider()
-            FooterView()
+            .frame(width: panelWidth)
         }
-        .frame(width: panelWidth)
     }
 }
 
@@ -113,6 +126,7 @@ private struct NotConnectedView: View {
 // MARK: - Contenu train connecté
 
 private struct ConnectedView: View {
+    @EnvironmentObject var store: TrainStore
     let state: TrainViewState
 
     private var accent: Color { state.operatorKind.accent }
@@ -129,6 +143,17 @@ private struct ConnectedView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 HeaderView(state: state, accent: accent)
+
+                if state.operatorKind == .sncf {
+                    Button {
+                        store.showsMap = true
+                    } label: {
+                        Label("Carte du trajet", systemImage: "map.fill")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.bordered)
+                    .foregroundColor(accent)
+                }
 
                 if !state.stops.isEmpty {
                     Divider()

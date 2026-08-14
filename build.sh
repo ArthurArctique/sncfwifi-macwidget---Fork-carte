@@ -22,6 +22,8 @@ SWIFT_SOURCES=(
     "${SRC_DIR}/MenuBarController.swift"
     "${SRC_DIR}/MockTrainData.swift"
     "${SRC_DIR}/StatusBarImageGenerator.swift"
+    "${SRC_DIR}/TrainMapModel.swift"
+    "${SRC_DIR}/TrainMapView.swift"
     "${SRC_DIR}/TrainPanelModel.swift"
     "${SRC_DIR}/TrainPanelView.swift"
 )
@@ -35,6 +37,7 @@ mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}"
 # Compilation arm64
 swiftc "${SWIFT_SOURCES[@]}" \
     -framework Cocoa \
+    -framework MapKit \
     -O \
     -target arm64-apple-macos11.0 \
     -o "/tmp/${APP_NAME}_arm64"
@@ -42,6 +45,7 @@ swiftc "${SWIFT_SOURCES[@]}" \
 # Compilation x86_64
 swiftc "${SWIFT_SOURCES[@]}" \
     -framework Cocoa \
+    -framework MapKit \
     -O \
     -target x86_64-apple-macos11.0 \
     -o "/tmp/${APP_NAME}_x86_64"
@@ -99,6 +103,12 @@ for attempt in 1 2 3; do
     echo "↻ Signature échouée (attribut étendu ré-appliqué) — nouvelle tentative $((attempt + 1))/3…"
     sleep 1
 done
+
+# Le dossier Desktop peut être synchronisé par File Provider et réintroduire FinderInfo juste
+# après la signature. Nettoyer une dernière fois afin que le bundle immédiatement produit reste
+# ouvrable depuis le terminal ; une copie installée dans /Applications évite cette réintroduction.
+xattr -cr "${APP_BUNDLE}" 2>/dev/null || true
+codesign --verify --deep --strict "${APP_BUNDLE}"
 
 echo ""
 echo "✅ Application créée : ${APP_BUNDLE}"

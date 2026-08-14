@@ -155,6 +155,7 @@ Permet de simuler un trajet sans connexion au WiFi du train.
 Endpoints simulés — TGV Inoui (JSON) :
 | Endpoint | Description |
 |---|---|
+| `GET /router/api/train/graph` | Tracé GeoJSON exact du trajet prévu |
 | `GET /router/api/train/gps` | Position GPS, vitesse en m/s |
 | `GET /router/api/train/progress` | Progression du trajet |
 | `GET /router/api/train/details` | Détails (arrêts, retard, numéro) |
@@ -173,6 +174,36 @@ Endpoints simulés — Eurostar (JSONP, réponses enveloppées dans `( … );`) 
 
 > Les deux plateformes expriment la **vitesse en m/s** et l'**altitude en mètres**. Les volumes de
 > données sont en **kB** côté SNCF et en **octets** côté Icomera.
+
+Depuis le panneau du train, le bouton **Carte du trajet** remplace le contenu du popover par une
+carte MapKit : le tracé prévu vient de `train/graph`, les arrêts de `train/details`, et la position
+de `train/gps`, sondée une fois par seconde. Entre deux relevés, le marqueur avance tout seul le
+long du tracé à la vitesse annoncée, ce qui donne un déplacement continu plutôt qu'un saut par
+seconde. Le sondage ne tourne que pendant que la carte est affichée.
+
+Le serveur de démo simule un Paris → Lyon → Marseille : la position avance le long du tracé à la
+vitesse réglée dans le panneau démo, de quoi vérifier la carte sans être à bord.
+
+## Carte du trajet en Python 🗺️
+
+Le script `scripts/plot_train_route.py` trace le GeoJSON de `/router/api/train/graph`, ajoute la
+position et la vitesse de `/router/api/train/gps`, puis marque les gares issues de
+`/router/api/train/details`.
+
+Depuis le WiFi du train :
+
+```bash
+python3 scripts/plot_train_route.py --output /tmp/train-route.png
+```
+
+Le fond OpenStreetMap est tenté automatiquement, mais le tracé fonctionne aussi sans fond externe :
+
+```bash
+python3 scripts/plot_train_route.py --no-basemap
+```
+
+Pour rejouer un instantané hors connexion, fournir les JSON sauvegardés avec `--graph-file`,
+`--gps-file` et éventuellement `--details-file`.
 
 ---
 

@@ -1,4 +1,5 @@
 import Cocoa
+import Combine
 import CoreLocation
 import CoreWLAN
 import UserNotifications
@@ -46,6 +47,10 @@ final class MenuBarController: NSObject {
     // Panneau flottant SwiftUI (remplace l'ancien NSMenu).
     private let store = TrainStore()
     private let popover = NSPopover()
+    /// Source de la carte du trajet. Elle vit aussi longtemps que le contrôleur pour conserver le
+    /// tracé déjà téléchargé d'une ouverture à l'autre ; seul son sondage démarre et s'arrête.
+    private let mapModel = TrainMapModel()
+    private var showsMapObserver: AnyCancellable?
 
     // Cache pour le redraw de l'icône sans appel API
     private var cachedArrivalDate: Date?
@@ -162,7 +167,20 @@ final class MenuBarController: NSObject {
     private func configurePopover() {
         popover.behavior = .transient
         popover.animates = true
-        popover.contentViewController = NSHostingController(rootView: TrainPanelView().environmentObject(store))
+        popover.delegate = self
+        popover.contentViewController = NSHostingController(
+            rootView: TrainPanelView()
+                .environmentObject(store)
+                .environmentObject(mapModel)
+        )
+
+        // NSPopover ne suit pas d'elle-même le changement de gabarit entre le panneau et la carte :
+        // on lui pousse la taille calculée par SwiftUI au tour de boucle suivant.
+        showsMapObserver = store.$showsMap
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                DispatchQueue.main.async { self?.resizePopoverToContent() }
+            }
 
         // Branche les actions du panneau sur les handlers existants.
         store.onRefresh = { [weak self] in self?.refresh() }
@@ -183,6 +201,12 @@ final class MenuBarController: NSObject {
             self?.lastArrivalNotifiedStopId = nil
             self?.refresh()
         }
+    }
+
+    private func resizePopoverToContent() {
+        guard let view = popover.contentViewController?.view else { return }
+        view.layoutSubtreeIfNeeded()
+        popover.contentSize = view.fittingSize
     }
 
     @objc private func togglePopover() {
@@ -978,6 +1002,14 @@ final class MenuBarController: NSObject {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(jsonString, forType: .string)
+    }
+}
+
+extension MenuBarController: NSPopoverDelegate {
+    /// Filet de sécurité : la carte arrête déjà son sondage dans `onDisappear`, mais on ne laisse
+    /// pas une requête par seconde tourner si SwiftUI ne le déclenchait pas à la fermeture.
+    func popoverDidClose(_ notification: Notification) {
+        mapModel.stop()
     }
 }
 

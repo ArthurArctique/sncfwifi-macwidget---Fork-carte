@@ -120,6 +120,8 @@ final class TrainStore: ObservableObject {
 
     /// Date de la dernière actualisation réussie (pour l'indicateur discret du panneau).
     @Published var lastRefreshDate: Date?
+    /// `true` quand la carte occupe le popover à la place du panneau d'informations.
+    @Published var showsMap = false
     /// Intervalle entre deux actualisations automatiques (doit refléter le Timer du contrôleur).
     let refreshInterval: TimeInterval = 30
 

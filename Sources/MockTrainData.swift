@@ -76,6 +76,49 @@ class MockTrainData {
         }
     }
 
+    func fetchMapData(completion: @escaping (_ graph: [String: Any]?, _ gps: [String: Any]?, _ details: [String: Any]?) -> Void) {
+        guard let baseURL else {
+            DispatchQueue.main.async { completion(nil, nil, nil) }
+            return
+        }
+
+        let group = DispatchGroup()
+        var graphData: [String: Any]?
+        var gpsData: [String: Any]?
+        var detailsData: [String: Any]?
+
+        let endpoints: [(String, ([String: Any]?) -> Void)] = [
+            ("/router/api/train/graph", { graphData = $0 }),
+            ("/router/api/train/gps", { gpsData = $0 }),
+            ("/router/api/train/details", { detailsData = $0 })
+        ]
+
+        for (path, setter) in endpoints {
+            guard let url = URL(string: path, relativeTo: baseURL) else { continue }
+            group.enter()
+            fetch(url: url) {
+                setter($0)
+                group.leave()
+            }
+        }
+
+        group.notify(queue: .main) {
+            completion(graphData, gpsData, detailsData)
+        }
+    }
+
+    /// Pendant de `TrainAPIClient.fetchGPS` : la position seule, sondée par la carte.
+    func fetchGPS(completion: @escaping ([String: Any]?) -> Void) {
+        guard let baseURL, let url = URL(string: "/router/api/train/gps", relativeTo: baseURL) else {
+            DispatchQueue.main.async { completion(nil) }
+            return
+        }
+
+        fetch(url: url) { data in
+            DispatchQueue.main.async { completion(data) }
+        }
+    }
+
     /// Pendant Eurostar : mêmes chemins que la plateforme Icomera, servis en JSONP par le
     /// serveur démo pour exercer aussi le déballage de `HTTPJSON`.
     func fetchAllEurostar(completion: @escaping (_ system: [String: Any]?, _ connectivity: [String: Any]?, _ users: [String: Any]?, _ user: [String: Any]?, _ position: [String: Any]?) -> Void) {
