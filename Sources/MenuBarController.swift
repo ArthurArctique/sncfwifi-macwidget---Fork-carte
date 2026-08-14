@@ -8,12 +8,40 @@ final class MenuBarController: NSObject {
 
     // MARK: - Properties
 
-    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    private let statusItem = MenuBarController.makeStatusItem()
     private let apiClient  = TrainAPIClient()
     private let eurostarClient = EurostarAPIClient()
     private var timer: Timer?
     private var clockTimer: Timer?
     private var lastRawData: [String: Any]?
+
+    /// Nom d'autosauvegarde du `NSStatusItem` : c'est lui qui identifie la position mémorisée par
+    /// macOS quand l'utilisateur déplace l'élément (⌘ + glisser).
+    private static let statusItemAutosaveName = "SNCFWifiStatusItem"
+
+    /// Position préférée initiale, en points depuis le bord droit de l'écran.
+    ///
+    /// Sans position enregistrée, macOS place un nouvel élément au premier emplacement libre en
+    /// partant de la droite. Sur un MacBook à encoche dont la barre est déjà bien remplie, cet
+    /// emplacement tombe *sous l'encoche* : l'élément existe et reste cliquable, mais il est
+    /// totalement invisible — et le panneau semble alors surgir de la caméra. 400 pt le pose dans
+    /// la zone des applications tierces, franchement à droite de l'encoche (large d'environ
+    /// 180 pt, soit ~645 pt du bord droit sur un écran 13").
+    private static let defaultPreferredPosition = 400
+
+    /// Crée l'élément de barre des menus après avoir amorcé sa position préférée.
+    ///
+    /// L'amorçage n'a lieu qu'au tout premier lancement : dès que l'utilisateur déplace l'élément,
+    /// macOS réécrit cette clé et son choix est conservé.
+    private static func makeStatusItem() -> NSStatusItem {
+        let positionKey = "NSStatusItem Preferred Position \(statusItemAutosaveName)"
+        if UserDefaults.standard.object(forKey: positionKey) == nil {
+            UserDefaults.standard.set(defaultPreferredPosition, forKey: positionKey)
+        }
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        item.autosaveName = statusItemAutosaveName
+        return item
+    }
 
     // Panneau flottant SwiftUI (remplace l'ancien NSMenu).
     private let store = TrainStore()
@@ -71,6 +99,7 @@ final class MenuBarController: NSObject {
         
         statusItem.button?.image = NSImage(systemSymbolName: "tram.fill", accessibilityDescription: "Train")
         statusItem.button?.imagePosition = .imageLeft
+        statusItem.button?.toolTip = "SNCF WiFi"
 
         // Le clic sur l'icône ouvre/ferme le panneau flottant (et non un NSMenu).
         statusItem.button?.action = #selector(togglePopover)
@@ -90,6 +119,41 @@ final class MenuBarController: NSObject {
         }
         clockTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             self?.redrawTitle()
+        }
+
+        // La position réelle n'est connue qu'une fois la barre des menus mise en page.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            self?.logStatusItemPlacement()
+        }
+    }
+
+    /// Trace la position obtenue dans la barre des menus, et signale le cas où macOS a placé
+    /// l'élément derrière l'encoche : il est alors invisible et impossible à cliquer, alors que
+    /// l'application fonctionne normalement. Consultable avec :
+    /// `log show --last 5m --predicate 'process == "SNCFWifi"'`
+    private func logStatusItemPlacement() {
+        guard let frame = statusItem.button?.window?.frame else {
+            NSLog("[SNCFWifi] Élément de barre des menus sans fenêtre — non placé par macOS.")
+            return
+        }
+        guard #available(macOS 12.0, *),
+              let screen = NSScreen.main,
+              let left = screen.auxiliaryTopLeftArea,
+              let right = screen.auxiliaryTopRightArea else {
+            NSLog("[SNCFWifi] Élément de barre des menus placé en x %.0f–%.0f (écran sans encoche).",
+                  frame.minX, frame.maxX)
+            return
+        }
+        let notch = CGRect(x: left.maxX, y: frame.minY, width: right.minX - left.maxX, height: frame.height)
+        if notch.intersects(frame) {
+            NSLog("""
+                  [SNCFWifi] Élément de barre des menus masqué par l'encoche : placé en x %.0f–%.0f, \
+                  encoche en x %.0f–%.0f. Libérez de la place dans la barre des menus, ou déplacez \
+                  l'élément avec ⌘ + glisser.
+                  """, frame.minX, frame.maxX, notch.minX, notch.maxX)
+        } else {
+            NSLog("[SNCFWifi] Élément de barre des menus visible en x %.0f–%.0f (encoche en x %.0f–%.0f).",
+                  frame.minX, frame.maxX, notch.minX, notch.maxX)
         }
     }
 
@@ -188,12 +252,24 @@ final class MenuBarController: NSObject {
     }
 
     private func applyTitleImage(text: String) {
-        guard !text.isEmpty,
-              let img = StatusBarImageGenerator.draw(text: text, progress: cachedGlobalProgress)
-        else { return }
-        statusItem.button?.title = ""
-        statusItem.button?.image = img
-        statusItem.button?.imagePosition = .imageOnly
+        guard !text.isEmpty else { return }
+        applyStatusItem(title: text,
+                        image: StatusBarImageGenerator.draw(text: text, progress: cachedGlobalProgress))
+    }
+
+    /// Rendu de l'élément de barre : la pastille dessinée (texte + jauge de progression) quand
+    /// elle a pu être générée, sinon l'icône du tram suivie du texte.
+    private func applyStatusItem(title: String, image: NSImage?) {
+        guard let button = statusItem.button else { return }
+        if let image {
+            button.title = ""
+            button.image = image
+            button.imagePosition = .imageOnly
+        } else {
+            button.image = NSImage(systemSymbolName: "tram.fill", accessibilityDescription: "Train")
+            button.imagePosition = .imageLeft
+            button.title = title.isEmpty ? "" : " \(title)"
+        }
     }
 
     // MARK: - Refresh
@@ -248,6 +324,7 @@ final class MenuBarController: NSObject {
 
     private func showNotConnected() {
         statusItem.button?.image = NSImage(systemSymbolName: "wifi.slash", accessibilityDescription: nil)
+        statusItem.button?.imagePosition = .imageOnly
         statusItem.button?.title = ""
         store.lastRefreshDate = Date()
         store.state = .notConnected(demoMode: MockTrainData.shared.isEnabled)
@@ -291,15 +368,7 @@ final class MenuBarController: NSObject {
             self.cachedHasPosition = gps != nil
 
             let (title, customImage, viewState) = self.buildTrainState(gps: gps, details: details, bar: bar, stats: stats, status: status)
-            if let img = customImage {
-                self.statusItem.button?.title = ""
-                self.statusItem.button?.image = img
-                self.statusItem.button?.imagePosition = .imageOnly
-            } else {
-                self.statusItem.button?.image = NSImage(systemSymbolName: "tram.fill", accessibilityDescription: nil)
-                self.statusItem.button?.imagePosition = .imageLeft
-                self.statusItem.button?.title = title.isEmpty ? "" : " \(title)"
-            }
+            self.applyStatusItem(title: title, image: customImage)
             self.store.lastRefreshDate = Date()
             self.store.state = .connected(viewState)
             // Applique le texte delay-aware (rotation) après avoir peuplé le cache
@@ -338,16 +407,8 @@ final class MenuBarController: NSObject {
             self.applyEurostarCache(viewState, hasPosition: position != nil)
 
             let text = self.eurostarTitleText()
-            if !text.isEmpty,
-               let img = StatusBarImageGenerator.draw(text: text, progress: viewState.globalProgress) {
-                self.statusItem.button?.title = ""
-                self.statusItem.button?.image = img
-                self.statusItem.button?.imagePosition = .imageOnly
-            } else {
-                self.statusItem.button?.image = NSImage(systemSymbolName: "tram.fill", accessibilityDescription: nil)
-                self.statusItem.button?.imagePosition = .imageLeft
-                self.statusItem.button?.title = ""
-            }
+            self.applyStatusItem(title: text,
+                                 image: text.isEmpty ? nil : StatusBarImageGenerator.draw(text: text, progress: viewState.globalProgress))
 
             self.store.lastRefreshDate = Date()
             self.store.state = .connected(viewState)
