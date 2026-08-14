@@ -4,6 +4,12 @@
 [![GitHub Release](https://img.shields.io/github/v/release/antvgr/sncfwifi-macwidget?include_prereleases)](https://github.com/antvgr/sncfwifi-macwidget/releases/latest)
 [![Coding with AI](https://img.shields.io/badge/Coding_with-AI-blue?style=flat)](https://github.com/nuclearrockstone/coding-with-ai-badge)
 
+> **Fork de [antvgr/sncfwifi-macwidget](https://github.com/antvgr/sncfwifi-macwidget).**
+> Le projet, son idée et l'essentiel du code sont d'[@antvgr](https://github.com/antvgr) ; ce dépôt
+> n'ajoute que la carte du trajet, un correctif d'affichage dans la barre des menus et quelques
+> retouches, détaillés dans [Nouveautés de ce fork](#nouveautés-de-ce-fork-). Le reste de ce README
+> est celui de l'amont, corrigé là où ce fork change le comportement décrit.
+
 Un widget pour la barre de menus macOS qui exploite l'API des portails WiFi embarqués pour afficher en temps réel les informations de votre trajet : gare suivante, vitesse, retard, données mobiles, etc.
 
 Deux réseaux sont pris en charge : le **WiFi TGV Inoui** (`wifi.sncf`) et le **WiFi Eurostar** (`EurostarTrainsWiFi`, plateforme Icomera / `ombord.info`). L'opérateur est détecté automatiquement à partir du SSID.
@@ -32,6 +38,10 @@ Deux réseaux sont pris en charge : le **WiFi TGV Inoui** (`wifi.sncf`) et le **
 ---
 
 ## Téléchargement ⬇️
+
+> ⚠️ **Ce fork ne publie pas de release.** Le lien ci-dessous et le cask Homebrew installent la
+> version de l'amont, **sans** les ajouts listés plus bas. Pour les avoir, il faut compiler
+> soi-même — voir [Compilation manuelle](#compilation-manuelle-).
 
 > Pas besoin de compiler — téléchargez directement le `.zip` depuis la page **Releases**.
 
@@ -78,6 +88,7 @@ brew reinstall --cask sncfwifi
 - **Menu déroulant** : numéro de train, liste des arrêts avec progression, consommation de données WiFi
 - **Retard** : affichage tournant `⚠ +5min · Régulation du trafic` quand le train est en retard
 - **Notification avant arrivée** : alerte 5, 10 ou 15 min avant la gare choisie
+- **Carte du trajet** *(ce fork)* : tracé, arrêts et position du train en direct, dans le panneau
 
 ### Eurostar
 
@@ -89,6 +100,58 @@ brew reinstall --cask sncfwifi
 > La plateforme Icomera n'expose **ni numéro de train, ni desserte, ni destination, ni retard, ni
 > heure d'arrivée**. La timeline des arrêts, le sélecteur de gare d'arrivée et la notification
 > avant arrivée sont donc masqués à bord d'un Eurostar.
+
+---
+
+## Nouveautés de ce fork ✨
+
+### Carte du trajet 🗺️
+
+Le bouton **Carte du trajet** remplace le contenu du panneau par une carte **MapKit** — pas une
+fenêtre à part. Le fond `mutedStandard` est celui qu'Apple destine aux données superposées, et le
+mode sombre suit le système.
+
+- **Tracé exact** depuis `train/graph`, arrêts cliquables depuis `train/details`
+- **Position en direct** : `train/gps` est sondé une fois par seconde, et entre deux relevés le
+  marqueur avance seul le long des rails à la vitesse annoncée. Le relevé est projeté sur le tracé,
+  puis un filtre résorbe l'écart à l'arrivée du suivant — le train suit donc la voie, pas une
+  droite entre deux points.
+- **Zoom au défilement vertical à deux doigts**, ancré sous le curseur. MapKit n'y proposait que le
+  pincement.
+- **Suivre le train** : zoome dessus puis le maintient au centre, image par image.
+- **Cadrage conservé** entre deux ouvertures de la carte.
+
+Le sondage à haute fréquence ne tourne que tant que la carte est affichée. Le coût machine est
+négligeable ; en revanche les tuiles Apple consomment le **quota data du WiFi du train** — c'est le
+premier affichage d'une zone qui coûte, ensuite elles sont en cache.
+
+### Barre des menus visible sur les Mac à encoche 🩹
+
+Sans position enregistrée, macOS pose un nouvel élément au premier emplacement libre en partant de
+la droite. Sur un MacBook à encoche dont la barre est déjà chargée, cet emplacement tombe **sous
+l'encoche** : l'élément existe et reste cliquable, mais il est invisible, et le panneau semble
+surgir de la caméra. Mesuré sur un 13 pouces : encoche de x 646 à 825, premier emplacement libre à
+x 730–768.
+
+L'élément réserve désormais sa place. Le déplacer avec **⌘ + glisser** reste prioritaire : macOS
+mémorise alors votre choix. Une trace au démarrage signale le cas où il finit malgré tout masqué :
+
+```bash
+log show --last 5m --predicate 'process == "SNCFWifi"'
+```
+
+### Libellé des gares accordé 🚉
+
+« En gare **du** Mans » au lieu de « En gare de Le Mans », « En gare **des** Aubrais » au lieu de
+« En gare de Les Aubrais ». L'abréviation d'un nom long ne coupe plus sur son article : « Les
+Aubrais - Orléans » donne « En gare des Aubrais ».
+
+### Serveur de démo qui roule pour de vrai 🧪
+
+Il servait une position fixe et trois arrêts reliés en ligne droite. Il simule maintenant un
+Paris → Lyon → Marseille suivant approximativement la LGV Sud-Est (343 points), et fait avancer la
+position le long de ce tracé à la vitesse réglée dans le panneau démo — de quoi vérifier la carte
+sans être à bord.
 
 ---
 
@@ -175,16 +238,12 @@ Endpoints simulés — Eurostar (JSONP, réponses enveloppées dans `( … );`) 
 > Les deux plateformes expriment la **vitesse en m/s** et l'**altitude en mètres**. Les volumes de
 > données sont en **kB** côté SNCF et en **octets** côté Icomera.
 
-Depuis le panneau du train, le bouton **Carte du trajet** remplace le contenu du popover par une
-carte MapKit : le tracé prévu vient de `train/graph`, les arrêts de `train/details`, et la position
-de `train/gps`, sondée une fois par seconde. Entre deux relevés, le marqueur avance tout seul le
-long du tracé à la vitesse annoncée, ce qui donne un déplacement continu plutôt qu'un saut par
-seconde. Le sondage ne tourne que pendant que la carte est affichée.
+Le trajet simulé est un Paris → Lyon → Marseille : la position avance le long du tracé à la vitesse
+réglée dans le panneau démo, ce qui exerce aussi la carte.
 
-Le serveur de démo simule un Paris → Lyon → Marseille : la position avance le long du tracé à la
-vitesse réglée dans le panneau démo, de quoi vérifier la carte sans être à bord.
+---
 
-## Carte du trajet en Python 🗺️
+## Tracer le trajet en Python 🐍
 
 Le script `scripts/plot_train_route.py` trace le GeoJSON de `/router/api/train/graph`, ajoute la
 position et la vitesse de `/router/api/train/gps`, puis marque les gares issues de
@@ -207,8 +266,23 @@ Pour rejouer un instantané hors connexion, fournir les JSON sauvegardés avec `
 
 ---
 
+## Contributeurs 🙌
+
+| | |
+|---|---|
+| [@antvgr](https://github.com/antvgr) | Auteur du projet d'origine — l'idée, l'app, les deux plateformes |
+| [@FlorianCasse](https://github.com/FlorianCasse) | Cask Homebrew (amont) |
+| [@ArthurArctique](https://github.com/ArthurArctique) | Ce fork : carte du trajet, correctifs |
+| **Claude** (Anthropic) | Co-auteur du code de ce fork — carte MapKit, correctif de l'encoche, libellé des gares, serveur de démo |
+
+---
+
 ## Développé avec l'IA 🤖
 
 Ce projet a été développé en grande partie avec l'aide de l'Intelligence Artificielle.
+
+Les commits de ce fork portent un `Co-Authored-By: Claude` quand le code a été écrit avec
+[Claude Code](https://claude.com/claude-code) — c'est-à-dire pour tout sauf
+`scripts/plot_train_route.py`, issu d'une session avec un autre assistant.
 
 ![Claude](https://cwab.nuclearrockstone.xyz/api/badge?name=claude&theme=dark)
