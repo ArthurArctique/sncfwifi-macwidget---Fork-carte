@@ -89,6 +89,7 @@ brew reinstall --cask sncfwifi
 - **Retard** : affichage tournant `⚠ +5min · Régulation du trafic` quand le train est en retard
 - **Notification avant arrivée** : alerte 5, 10 ou 15 min avant la gare choisie
 - **Carte du trajet** *(ce fork)* : tracé, arrêts et position du train en direct, dans le panneau
+- **Dénivelé du trajet** *(ce fork)* : dénivelé positif cumulé par gare, sur demande
 
 ### Eurostar
 
@@ -127,9 +128,13 @@ premier affichage d'une zone qui coûte, ensuite elles sont en cache.
 
 ### Dénivelé positif du trajet ⛰️
 
-Chaque gare de la desserte affiche le **dénivelé positif cumulé depuis le départ**, et le panneau
-résume celui atteint à la position actuelle. Sur un Toulouse → Lyon : 70 m à Carcassonne, 282 m à
-Nîmes, 1 582 m à l'arrivée.
+Le bouton **Dénivelé du trajet** affiche, sous chaque gare de la desserte, le **dénivelé positif
+cumulé depuis le départ**. Sur un Toulouse → Lyon : 70 m à Carcassonne, 282 m à Nîmes, 1 582 m à
+l'arrivée.
+
+> 🔒 **C'est la seule fonction qui sorte du réseau du train, et elle est sur demande.** Aucune
+> requête n'est envoyée tant que le bouton n'a pas été cliqué : sans clic, l'app ne parle qu'au
+> train. Le profil est ensuite gardé en mémoire pour la durée du trajet.
 
 > ⚠️ **C'est une estimation, et elle dépend d'une convention.** L'API du train ne fournit aucune
 > altitude en dehors de la position instantanée : le tracé de `train/graph` est en deux dimensions
@@ -148,8 +153,8 @@ relevait 69 — un facteur 3,5. Après lissage à la même échelle, les deux so
 près. Le dénivelé positif reste une grandeur dépendante de l'échelle : le même trajet donne 1 998 m
 avec une fenêtre de 1 km, 1 584 m à 2 km, 1 151 m à 5 km.
 
-C'est le seul appel de l'app à un service extérieur au train, en dehors des tuiles de la carte ; les
-coordonnées du trajet sont envoyées à l'IGN.
+Les coordonnées du trajet sont envoyées à l'IGN au moment du clic — c'est ce que ce bouton met sous
+votre contrôle.
 
 ### Barre des menus visible sur les Mac à encoche 🩹
 

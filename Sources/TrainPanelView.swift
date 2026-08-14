@@ -163,6 +163,23 @@ private struct ConnectedView: View {
                     }
                     .buttonStyle(.bordered)
                     .foregroundColor(accent)
+
+                    Button {
+                        store.onToggleElevation()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.up.right.circle.fill")
+                            Text(store.showsElevation ? "Masquer le dénivelé" : "Dénivelé du trajet")
+                            Spacer()
+                            if store.isLoadingElevation {
+                                ProgressView().scaleEffect(0.5).frame(width: 12, height: 12)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.bordered)
+                    .foregroundColor(accent)
+                    .help("Calcule le dénivelé positif du trajet auprès du RGE ALTI de l'IGN")
                 }
 
                 if !state.stops.isEmpty {
@@ -350,7 +367,7 @@ private struct StopRowView: View {
                     Text(stop.label)
                         .font(.system(size: 12, weight: stop.status == .current ? .semibold : .regular))
                         .foregroundColor(stop.status == .upcoming ? .secondary : .primary)
-                    if let gain = stop.elevationGainM {
+                    if let gain = stop.elevationGainM, !isFirst {
                         Label(ElevationLabel.gain(gain), systemImage: "arrow.up.right")
                             .font(.system(size: 10))
                             .foregroundColor(.secondary)

@@ -53,6 +53,8 @@ final class MenuBarController: NSObject {
     /// Profil altimétrique du trajet : sert le dénivelé positif du panneau. Chargé une fois par
     /// trajet, il survit aux rafraîchissements.
     private let routeProfile = RouteProfileStore()
+    /// Trajet en cours, retenu pour ne charger le profil qu'au moment où l'utilisateur le demande.
+    private var currentJourneyKey = ""
     private var panelLayoutObserver: AnyCancellable?
     /// Largeur imposée à la pastille pendant que le panneau est ouvert (voir `freezeStatusWidth`).
     private var frozenStatusWidth: CGFloat?
@@ -118,7 +120,10 @@ final class MenuBarController: NSObject {
         configurePopover()
 
         // Le profil altimétrique arrive après coup : le panneau doit se remettre à jour tout seul.
-        routeProfile.onLoaded = { [weak self] in self?.refresh() }
+        routeProfile.onLoaded = { [weak self] in
+            self?.store.isLoadingElevation = false
+            self?.refresh()
+        }
 
         NotificationCenter.default.addObserver(self, selector: #selector(refresh), name: NSNotification.Name("DemoDataDidUpdate"), object: nil)
         
@@ -208,10 +213,26 @@ final class MenuBarController: NSObject {
         store.onOpenDemoPanel = { [weak self] in self?.openDemoControlPanel() }
         store.onCopyJSON = { [weak self] in self?.copyDebugData() }
         store.onOpenAbout = { [weak self] in self?.openAbout() }
+        store.onToggleElevation = { [weak self] in self?.toggleElevation() }
         store.onSettingsChanged = { [weak self] in
             self?.lastArrivalNotifiedStopId = nil
             self?.refresh()
         }
+    }
+
+    /// Bascule l'affichage du dénivelé. Le profil n'est demandé à l'IGN qu'au premier affichage,
+    /// et reste ensuite en mémoire pour la durée du trajet.
+    private func toggleElevation() {
+        store.showsElevation.toggle()
+        guard store.showsElevation else {
+            refresh()
+            return
+        }
+        if routeProfile.totalGain == nil {
+            store.isLoadingElevation = true
+        }
+        routeProfile.load(journey: currentJourneyKey)
+        refresh()
     }
 
     private func resizePopoverToContent() {
@@ -454,7 +475,10 @@ final class MenuBarController: NSObject {
 
             self.lastKnownOperator = .sncf
             self.cachedOperator = .sncf
-            self.routeProfile.load(journey: Self.journeyKey(details: details))
+            self.currentJourneyKey = Self.journeyKey(details: details)
+            if self.store.showsElevation {
+                self.routeProfile.load(journey: self.currentJourneyKey)
+            }
             self.cachedDataRemainingMB = nil
             self.cachedHasPosition = gps != nil
 
@@ -795,15 +819,19 @@ final class MenuBarController: NSObject {
                 realTime: formatTime(stop["realDate"] as? String) ?? "",
                 delayMin: delay,
                 status: status,
-                elevationGainM: stopCoordinate(stop).flatMap { self.routeProfile.gain(at: $0) }
+                elevationGainM: self.store.showsElevation
+                    ? stopCoordinate(stop).flatMap { self.routeProfile.gain(at: $0) }
+                    : nil
             )
         }
 
-        if let lat = currentLat, let lon = currentLon {
-            viewState.currentElevationGainM = routeProfile.gain(
-                at: CLLocationCoordinate2D(latitude: lat, longitude: lon))
+        if store.showsElevation {
+            if let lat = currentLat, let lon = currentLon {
+                viewState.currentElevationGainM = routeProfile.gain(
+                    at: CLLocationCoordinate2D(latitude: lat, longitude: lon))
+            }
+            viewState.totalElevationGainM = routeProfile.totalGain
         }
-        viewState.totalElevationGainM = routeProfile.totalGain
 
         // Qualité WiFi
         if let stats = stats {

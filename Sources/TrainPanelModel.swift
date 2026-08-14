@@ -130,6 +130,11 @@ final class TrainStore: ObservableObject {
     @Published var lastRefreshDate: Date?
     /// `true` quand la carte occupe le popover à la place du panneau d'informations.
     @Published var showsMap = false
+    /// `true` quand le dénivelé positif est affiché. Décliché par l'utilisateur : tant qu'il est
+    /// à `false`, aucune requête n'est envoyée à l'IGN.
+    @Published var showsElevation = false
+    /// `true` pendant la récupération du profil altimétrique.
+    @Published var isLoadingElevation = false
     /// Intervalle entre deux actualisations automatiques (doit refléter le Timer du contrôleur).
     let refreshInterval: TimeInterval = 30
 
@@ -143,6 +148,8 @@ final class TrainStore: ObservableObject {
     var onOpenDemoPanel: () -> Void = {}
     var onCopyJSON: () -> Void = {}
     var onOpenAbout: () -> Void = {}
+    /// Affiche ou masque le dénivelé. Le premier affichage déclenche la requête à l'IGN.
+    var onToggleElevation: () -> Void = {}
     /// Appelée quand un réglage de notification change (pour relancer un refresh).
     var onSettingsChanged: () -> Void = {}
 }
