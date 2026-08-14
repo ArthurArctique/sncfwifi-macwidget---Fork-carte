@@ -11,7 +11,13 @@ class StatusBarImageGenerator {
     ///   - text: Le texte à afficher (ex: "Paris 12min · 300km/h")
     ///   - progress: La progression (de 0.0 à 1.0)
     ///   - maxWidth: Largeur maximale de la pastille ; le texte est tronqué au-delà.
-    static func draw(text: String, progress: Double, maxWidth: CGFloat = StatusBarImageGenerator.maxWidth) -> NSImage? {
+    ///   - minWidth: Largeur minimale ; la pastille est complétée à droite, le texte restant calé
+    ///     à gauche. Sert à figer la largeur de l'élément de barre quand le texte alterne, pour
+    ///     que le bouton — et le popover qui s'y ancre — ne se déplacent pas.
+    static func draw(text: String,
+                     progress: Double,
+                     maxWidth: CGFloat = StatusBarImageGenerator.maxWidth,
+                     minWidth: CGFloat = 0) -> NSImage? {
         let font = NSFont.systemFont(ofSize: 12, weight: .medium)
 
         // Troncature en fin de ligne (« … ») si le texte dépasse la largeur autorisée.
@@ -31,7 +37,7 @@ class StatusBarImageGenerator {
         // Largeur de texte disponible, plafonnée.
         let maxTextWidth = max(0, maxWidth - marginX * 2)
         let textWidth = min(naturalSize.width, maxTextWidth)
-        let width = textWidth + (marginX * 2)
+        let width = max(textWidth + (marginX * 2), minWidth)
         let height: CGFloat = 22 // Hauteur standard
 
         let image = NSImage(size: NSSize(width: width, height: height))
@@ -43,7 +49,10 @@ class StatusBarImageGenerator {
         attributedString.draw(in: textRect)
 
         // 2. Dessiner la barre de fond
-        let barWidth = textWidth
+        // Sur toute la largeur utile, et non sur celle du texte : sans quoi la jauge changerait de
+        // longueur à chaque bascule du titre, alors que la pastille est justement figée pour ne
+        // plus bouger. Sans `minWidth`, les deux valeurs sont égales et le rendu est inchangé.
+        let barWidth = width - (marginX * 2)
         let barHeight: CGFloat = 2.5
         let barY: CGFloat = 2
         

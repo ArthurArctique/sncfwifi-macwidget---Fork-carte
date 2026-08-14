@@ -51,6 +51,8 @@ final class MenuBarController: NSObject {
     /// tracé déjà téléchargé d'une ouverture à l'autre ; seul son sondage démarre et s'arrête.
     private let mapModel = TrainMapModel()
     private var panelLayoutObserver: AnyCancellable?
+    /// Largeur imposée à la pastille pendant que le panneau est ouvert (voir `freezeStatusWidth`).
+    private var frozenStatusWidth: CGFloat?
 
     // Cache pour le redraw de l'icône sans appel API
     private var cachedArrivalDate: Date?
@@ -218,6 +220,11 @@ final class MenuBarController: NSObject {
             popover.performClose(nil)
         } else {
             NSApp.activate(ignoringOtherApps: true)
+            // Avant de présenter : le popover s'ancre sur le bouton, sa largeur ne doit plus varier.
+            // La mise en page est forcée dans la foulée pour que `button.bounds` soit déjà la
+            // largeur figée, et non celle d'avant.
+            freezeStatusWidth()
+            button.superview?.layoutSubtreeIfNeeded()
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
             // La vue n'a sa taille définitive qu'une fois montée dans la fenêtre du popover.
@@ -226,45 +233,54 @@ final class MenuBarController: NSObject {
     }
 
     @objc private func redrawTitle() {
-        if cachedDelayMins > 0 {
-            // Affiche le retard pendant 5s, puis repasse au texte normal
-            var t = "⚠ +\(cachedDelayMins)min"
-            if !cachedDelayCause.isEmpty { t += " · \(cachedDelayCause)" }
-            applyTitleImage(text: t)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
-                self?.redrawNormalTitle()
-            }
-        } else {
+        let delay = delayTitleText()
+        if delay.isEmpty {
             redrawNormalTitle()
+            return
+        }
+
+        // Affiche le retard pendant 5s, puis repasse au texte normal
+        applyTitleImage(text: delay)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            self?.redrawNormalTitle()
         }
     }
 
     private func redrawNormalTitle() {
+        applyTitleImage(text: normalTitleText())
+    }
+
+    /// Texte d'alerte affiché en alternance quand le train est en retard. Vide sinon.
+    private func delayTitleText() -> String {
+        guard cachedDelayMins > 0 else { return "" }
+        var text = "⚠ +\(cachedDelayMins)min"
+        if !cachedDelayCause.isEmpty { text += " · \(cachedDelayCause)" }
+        return text
+    }
+
+    /// Texte courant de la barre des menus, hors alerte : gare et temps restant.
+    private func normalTitleText() -> String {
         if cachedOperator == .eurostar {
-            applyTitleImage(text: eurostarTitleText())
-            return
+            return eurostarTitleText()
+        }
+        if cachedIsStopped && !cachedStoppedStation.isEmpty {
+            return stationLocationText(cachedStoppedStation)
         }
 
-        let text: String
-        if cachedIsStopped && !cachedStoppedStation.isEmpty {
-            text = stationLocationText(cachedStoppedStation)
-        } else {
-            var t = cachedDestShort
-            if let arrival = cachedArrivalDate, arrival > Date() {
-                let diffMins = Int(arrival.timeIntervalSinceNow / 60)
-                let timeStr: String
-                if diffMins >= 60 {
-                    let h = diffMins / 60
-                    let m = diffMins % 60
-                    timeStr = m > 0 ? "\(h)h\(String(format: "%02d", m))" : "\(h)h"
-                } else {
-                    timeStr = "\(diffMins)min"
-                }
-                t = t.isEmpty ? timeStr : "\(t) · \(timeStr)"
+        var text = cachedDestShort
+        if let arrival = cachedArrivalDate, arrival > Date() {
+            let diffMins = Int(arrival.timeIntervalSinceNow / 60)
+            let timeStr: String
+            if diffMins >= 60 {
+                let h = diffMins / 60
+                let m = diffMins % 60
+                timeStr = m > 0 ? "\(h)h\(String(format: "%02d", m))" : "\(h)h"
+            } else {
+                timeStr = "\(diffMins)min"
             }
-            text = t
+            text = text.isEmpty ? timeStr : "\(text) · \(timeStr)"
         }
-        applyTitleImage(text: text)
+        return text
     }
 
     /// Titre Eurostar : vitesse + data restante. La plateforme Icomera ne fournit ni destination
@@ -282,8 +298,35 @@ final class MenuBarController: NSObject {
 
     private func applyTitleImage(text: String) {
         guard !text.isEmpty else { return }
+        let width = frozenStatusWidth ?? StatusBarImageGenerator.maxWidth
         applyStatusItem(title: text,
-                        image: StatusBarImageGenerator.draw(text: text, progress: cachedGlobalProgress))
+                        image: StatusBarImageGenerator.draw(text: text,
+                                                            progress: cachedGlobalProgress,
+                                                            maxWidth: width,
+                                                            minWidth: frozenStatusWidth ?? 0))
+    }
+
+    // MARK: - Largeur figée pendant l'ouverture du panneau
+
+    /// Fige la largeur de la pastille tant que le panneau est ouvert.
+    ///
+    /// En cas de retard, le titre alterne toutes les 5 s entre l'alerte et la gare. Les deux textes
+    /// n'ont pas la même longueur : l'élément étant en `variableLength`, il se redimensionne, et le
+    /// popover ancré dessus se recentre donc à chaque bascule. On retient la plus large des deux
+    /// pastilles possibles et on s'y tient : le texte alterne toujours, le bouton ne bouge plus.
+    private func freezeStatusWidth() {
+        let candidates = [normalTitleText(), delayTitleText()].filter { !$0.isEmpty }
+        let widths = candidates.compactMap {
+            StatusBarImageGenerator.draw(text: $0, progress: cachedGlobalProgress)?.size.width
+        }
+        frozenStatusWidth = widths.max()
+        redrawTitle()
+    }
+
+    private func unfreezeStatusWidth() {
+        guard frozenStatusWidth != nil else { return }
+        frozenStatusWidth = nil
+        redrawTitle()
     }
 
     /// Rendu de l'élément de barre : la pastille dessinée (texte + jauge de progression) quand
@@ -1030,6 +1073,9 @@ extension MenuBarController: NSPopoverDelegate {
     /// pas une requête par seconde tourner si SwiftUI ne le déclenchait pas à la fermeture.
     func popoverDidClose(_ notification: Notification) {
         mapModel.stop()
+        // La barre des menus est une place rare, surtout à côté d'une encoche : la pastille
+        // reprend sa largeur naturelle dès que le panneau est refermé.
+        unfreezeStatusWidth()
     }
 }
 
