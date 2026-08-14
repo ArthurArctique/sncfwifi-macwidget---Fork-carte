@@ -218,7 +218,7 @@ final class MenuBarController: NSObject {
 
         let text: String
         if cachedIsStopped && !cachedStoppedStation.isEmpty {
-            text = "En gare de \(cachedStoppedStation)"
+            text = stationLocationText(cachedStoppedStation)
         } else {
             var t = cachedDestShort
             if let arrival = cachedArrivalDate, arrival > Date() {
@@ -621,7 +621,7 @@ final class MenuBarController: NSObject {
             
             var text = ""
             if isStoppedAtStation, let station = nextStopLabel, !station.isEmpty {
-                text = "En gare de \(shortStationName(station))"
+                text = stationLocationText(shortStationName(station))
             } else {
                 let shortDest = shortStationName(destLabel)
                 if !timeRemainingStr.isEmpty {
@@ -649,7 +649,7 @@ final class MenuBarController: NSObject {
             // Fallback s'il n'y a pas la liste des arrêts
             if let next = nextStopLabel {
                 if isStoppedAtStation {
-                    barTitle = "En gare de \(next)"
+                    barTitle = stationLocationText(next)
                 } else if speed > 0 {
                     barTitle = "\(speed) km/h  ›  \(next)"
                 } else {
@@ -764,6 +764,18 @@ final class MenuBarController: NSObject {
 
     // MARK: - Helpers de construction
 
+    private func stationLocationText(_ name: String) -> String {
+        let station = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lowercased = station.lowercased()
+        if lowercased.hasPrefix("le ") {
+            return "En gare du \(station.dropFirst(3))"
+        }
+        if lowercased.hasPrefix("les ") {
+            return "En gare des \(station.dropFirst(4))"
+        }
+        return "En gare de \(station)"
+    }
+
     private func shortStationName(_ name: String) -> String {
         let exact: [String: String] = [
             "Paris - Gare de Lyon - Hall 1 & 2":                   "Paris Lyon",
@@ -792,7 +804,7 @@ final class MenuBarController: NSObject {
         if name.count <= 15 { return name }
         // Nom long non répertorié : on garde le premier mot, qui est le plus souvent la ville
         // (ex. "Milano Porta Garibaldi" → "Milano", "Torino Porta Susa" → "Torino").
-        if let firstWord = name.split(separator: " ").first, firstWord.count >= 3 {
+        if let firstWord = name.split(separator: " ").first, firstWord.count >= 3, firstWord.lowercased() != "les" {
             return String(firstWord)
         }
         return String(name.prefix(14)) + "…"
