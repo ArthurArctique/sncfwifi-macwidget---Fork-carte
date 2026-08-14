@@ -104,7 +104,7 @@ private struct TrainMapRepresentable: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(model: model, accent: accent) }
 
-    func makeNSView(context: Context) -> MKMapView {
+    func makeNSView(context: Context) -> ScrollZoomMapView {
         let mapView = ScrollZoomMapView()
         mapView.delegate = context.coordinator
         // `mutedStandard` est le fond conçu pour recevoir des données par-dessus : les couleurs
@@ -120,11 +120,11 @@ private struct TrainMapRepresentable: NSViewRepresentable {
         return mapView
     }
 
-    func updateNSView(_ mapView: MKMapView, context: Context) {
+    func updateNSView(_ mapView: ScrollZoomMapView, context: Context) {
         context.coordinator.apply(overviewToken: overviewToken)
     }
 
-    static func dismantleNSView(_ mapView: MKMapView, coordinator: Coordinator) {
+    static func dismantleNSView(_ mapView: ScrollZoomMapView, coordinator: Coordinator) {
         coordinator.detach()
     }
 
@@ -147,7 +147,7 @@ private struct TrainMapRepresentable: NSViewRepresentable {
         /// suivi resté « en cours d'animation » ne recentrerait plus jamais.
         private static let followEngageTimeout: TimeInterval = 2
 
-        private weak var mapView: MKMapView?
+        private weak var mapView: ScrollZoomMapView?
         private let model: TrainMapModel
         private let accent: NSColor
         private let trainAnnotation = TrainAnnotation()
@@ -182,7 +182,7 @@ private struct TrainMapRepresentable: NSViewRepresentable {
 
         // MARK: Cycle de vie
 
-        func attach(to mapView: MKMapView) {
+        func attach(to mapView: ScrollZoomMapView) {
             self.mapView = mapView
             // Mode `.common` : sans lui, l'animation se fige pendant que l'utilisateur fait
             // glisser la carte — précisément quand le mouvement doit rester fluide.
@@ -203,6 +203,10 @@ private struct TrainMapRepresentable: NSViewRepresentable {
         // MARK: Entrées
 
         func apply(overviewToken: Int) {
+            // En suivi, le train est au centre : y ancrer le zoom évite que celui-ci écarte la
+            // carte pour que le recentrage la ramène aussitôt, image après image.
+            mapView?.zoomsAroundCenter = model.followsTrain
+
             restoreCameraIfNeeded()
             applyRoute(model.route)
             applyStops(model.stops)
@@ -569,6 +573,20 @@ private final class ScrollZoomMapView: MKMapView {
     /// Largeur minimale de la vue, pour ne pas zoomer jusqu'à perdre tout repère.
     private static let minVisibleMeters: CLLocationDistance = 150
 
+    /// Période de regroupement des événements de défilement, soit une image à 60 Hz.
+    private static let coalesceInterval: TimeInterval = 1.0 / 60.0
+
+    /// En mode suivi, ancrer le zoom au centre plutôt que sous le curseur.
+    ///
+    /// Le train y est maintenu image par image : ancrer ailleurs déplacerait la carte, que le
+    /// recentrage ramènerait aussitôt — deux écritures de caméra qui se contredisent à chaque
+    /// image, ce qui se voit immédiatement comme des saccades.
+    var zoomsAroundCenter = false
+
+    private var pendingExponent: Double = 0
+    private var pendingAnchor: CGPoint = .zero
+    private var coalesceTimer: Timer?
+
     override func scrollWheel(with event: NSEvent) {
         guard abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX) else {
             super.scrollWheel(with: event)
@@ -579,8 +597,28 @@ private final class ScrollZoomMapView: MKMapView {
         guard scroll != 0 else { return }
 
         let unit = event.hasPreciseScrollingDeltas ? Self.trackpadUnit : Self.wheelUnit
-        zoom(by: pow(2, Self.zoomInSign * scroll / unit),
-             around: convert(event.locationInWindow, from: nil))
+        pendingExponent += Self.zoomInSign * scroll / unit
+        pendingAnchor = zoomsAroundCenter
+            ? CGPoint(x: bounds.midX, y: bounds.midY)
+            : convert(event.locationInWindow, from: nil)
+
+        // Un trackpad émet bien plus d'événements qu'il n'y a d'images à afficher. Les appliquer
+        // un par un ferait autant de recalculs de caméra pour un seul geste : on les cumule et on
+        // n'écrit qu'une fois par image.
+        guard coalesceTimer == nil else { return }
+        let timer = Timer(timeInterval: Self.coalesceInterval, repeats: false) { [weak self] _ in
+            self?.flushPendingZoom()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        coalesceTimer = timer
+    }
+
+    private func flushPendingZoom() {
+        coalesceTimer = nil
+        let exponent = pendingExponent
+        pendingExponent = 0
+        guard exponent != 0 else { return }
+        zoom(by: pow(2, exponent), around: pendingAnchor)
     }
 
     /// Met la carte à l'échelle en laissant sous le curseur le point qui s'y trouvait.
