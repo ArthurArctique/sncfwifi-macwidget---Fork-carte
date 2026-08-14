@@ -20,6 +20,9 @@ struct StopRow: Identifiable {
     let realTime: String
     let delayMin: Int
     let status: StopStatus
+    /// Dénivelé positif cumulé depuis la gare de départ, en mètres. `nil` tant que le profil
+    /// altimétrique du trajet n'a pas été obtenu.
+    var elevationGainM: Double?
 }
 
 /// Une gare proposée dans le sélecteur "Gare d'arrivée".
@@ -39,6 +42,11 @@ struct TrainViewState {
     var globalProgress: Double
 
     var speedKmh: Int
+
+    /// Dénivelé positif accumulé depuis le départ jusqu'à la position actuelle, en mètres.
+    var currentElevationGainM: Double?
+    /// Dénivelé positif de l'ensemble du trajet, en mètres.
+    var totalElevationGainM: Double?
 
     var wifiQuality: Int?      // 0…5
     var wifiDevices: Int?

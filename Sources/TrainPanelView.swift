@@ -45,6 +45,16 @@ extension TrainOperator {
     }
 }
 
+/// Mise en forme du dénivelé positif, partagée par la timeline et la ligne de résumé.
+enum ElevationLabel {
+    /// "280 m", "1,6 km" au-delà du millier — l'unité bascule comme pour les volumes de données.
+    static func gain(_ meters: Double) -> String {
+        meters >= 1000
+            ? String(format: "%.1f km", locale: .current, meters / 1000)
+            : String(format: "%.0f m", locale: .current, meters)
+    }
+}
+
 // MARK: - Vue racine
 
 struct TrainPanelView: View {
@@ -158,6 +168,11 @@ private struct ConnectedView: View {
                 if !state.stops.isEmpty {
                     Divider()
                     TimelineView(stops: state.stops, accent: accent)
+                }
+
+                if let current = state.currentElevationGainM {
+                    Divider()
+                    ElevationView(current: current, total: state.totalElevationGainM, accent: accent)
                 }
 
                 if hasNetworkSection {
@@ -331,9 +346,17 @@ private struct StopRowView: View {
 
             // Libellé + horaires
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(stop.label)
-                    .font(.system(size: 12, weight: stop.status == .current ? .semibold : .regular))
-                    .foregroundColor(stop.status == .upcoming ? .secondary : .primary)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(stop.label)
+                        .font(.system(size: 12, weight: stop.status == .current ? .semibold : .regular))
+                        .foregroundColor(stop.status == .upcoming ? .secondary : .primary)
+                    if let gain = stop.elevationGainM {
+                        Label(ElevationLabel.gain(gain), systemImage: "arrow.up.right")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                            .help("Dénivelé positif cumulé depuis le départ")
+                    }
+                }
                 Spacer(minLength: 4)
                 if stop.delayMin > 0 && !stop.theoricTime.isEmpty && stop.theoricTime != stop.realTime {
                     Text(stop.theoricTime)
@@ -349,6 +372,33 @@ private struct StopRowView: View {
             .font(.system(size: 12))
             .padding(.bottom, isLast ? 0 : 12)
         }
+    }
+}
+
+// MARK: - Dénivelé
+
+private struct ElevationView: View {
+    let current: Double
+    let total: Double?
+    let accent: Color
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.up.right.circle.fill")
+                .font(.system(size: 13))
+                .foregroundColor(accent)
+            Text("Dénivelé positif")
+                .font(.system(size: 12))
+            Spacer()
+            Text(ElevationLabel.gain(current))
+                .font(.system(size: 12, weight: .semibold))
+            if let total, total > current {
+                Text("/ \(ElevationLabel.gain(total))")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+        }
+        .help("Cumul depuis la gare de départ. Estimation à partir du RGE ALTI de l'IGN, lissée sur 2 km.")
     }
 }
 

@@ -125,6 +125,32 @@ Le sondage à haute fréquence ne tourne que tant que la carte est affichée. Le
 négligeable ; en revanche les tuiles Apple consomment le **quota data du WiFi du train** — c'est le
 premier affichage d'une zone qui coûte, ensuite elles sont en cache.
 
+### Dénivelé positif du trajet ⛰️
+
+Chaque gare de la desserte affiche le **dénivelé positif cumulé depuis le départ**, et le panneau
+résume celui atteint à la position actuelle. Sur un Toulouse → Lyon : 70 m à Carcassonne, 282 m à
+Nîmes, 1 582 m à l'arrivée.
+
+> ⚠️ **C'est une estimation, et elle dépend d'une convention.** L'API du train ne fournit aucune
+> altitude en dehors de la position instantanée : le tracé de `train/graph` est en deux dimensions
+> et les arrêts n'en portent pas. Le profil est donc reconstitué avec le **RGE ALTI de l'IGN**
+> (Géoplateforme), interrogé une fois par trajet — trois requêtes, environ 150 Ko.
+
+Deux précautions rendent le chiffre défendable :
+
+- le tracé est **rééchantillonné à pas constant** (200 m), pour que la densité variable du graphe
+  SNCF ne décide pas du résultat ;
+- le profil est **lissé sur 2 km**, parce que le RGE ALTI donne l'altitude du *sol* et non celle de
+  la *voie* : sur une LGV, le train franchit les vallées en viaduc et les collines en tranchée.
+
+Mesuré sur 29 km de LGV réelle, le profil brut donnait 244 m de dénivelé là où le GPS du train en
+relevait 69 — un facteur 3,5. Après lissage à la même échelle, les deux sources concordent à 5 %
+près. Le dénivelé positif reste une grandeur dépendante de l'échelle : le même trajet donne 1 998 m
+avec une fenêtre de 1 km, 1 584 m à 2 km, 1 151 m à 5 km.
+
+C'est le seul appel de l'app à un service extérieur au train, en dehors des tuiles de la carte ; les
+coordonnées du trajet sont envoyées à l'IGN.
+
 ### Barre des menus visible sur les Mac à encoche 🩹
 
 > Ce n'est pas un défaut introduit ici. Le comportement existe dans l'amont, et dans à peu près

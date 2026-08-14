@@ -50,6 +50,9 @@ final class MenuBarController: NSObject {
     /// Source de la carte du trajet. Elle vit aussi longtemps que le contrôleur pour conserver le
     /// tracé déjà téléchargé d'une ouverture à l'autre ; seul son sondage démarre et s'arrête.
     private let mapModel = TrainMapModel()
+    /// Profil altimétrique du trajet : sert le dénivelé positif du panneau. Chargé une fois par
+    /// trajet, il survit aux rafraîchissements.
+    private let routeProfile = RouteProfileStore()
     private var panelLayoutObserver: AnyCancellable?
     /// Largeur imposée à la pastille pendant que le panneau est ouvert (voir `freezeStatusWidth`).
     private var frozenStatusWidth: CGFloat?
@@ -113,6 +116,9 @@ final class MenuBarController: NSObject {
         statusItem.button?.target = self
 
         configurePopover()
+
+        // Le profil altimétrique arrive après coup : le panneau doit se remettre à jour tout seul.
+        routeProfile.onLoaded = { [weak self] in self?.refresh() }
 
         NotificationCenter.default.addObserver(self, selector: #selector(refresh), name: NSNotification.Name("DemoDataDidUpdate"), object: nil)
         
@@ -394,7 +400,19 @@ final class MenuBarController: NSObject {
         load(operator: next, fallbacks: Array(fallbacks.dropFirst()))
     }
 
+    /// Empreinte du trajet : train et desserte. Sert à ne recharger le profil altimétrique qu'au
+    /// changement de train, et non à chaque rafraîchissement.
+    private static func journeyKey(details: [String: Any]?) -> String {
+        guard let details else { return "" }
+        let train = asNonEmptyString(details["trainId"]) ?? asNonEmptyString(details["number"]) ?? ""
+        let stops = (details["stops"] as? [[String: Any]]) ?? []
+        let first = asNonEmptyString(stops.first?["label"]) ?? ""
+        let last = asNonEmptyString(stops.last?["label"]) ?? ""
+        return train.isEmpty && first.isEmpty ? "" : "\(train)|\(stops.count)|\(first)>\(last)"
+    }
+
     private func showNotConnected() {
+        routeProfile.reset()
         statusItem.button?.image = NSImage(systemSymbolName: "wifi.slash", accessibilityDescription: nil)
         statusItem.button?.imagePosition = .imageOnly
         statusItem.button?.title = ""
@@ -436,6 +454,7 @@ final class MenuBarController: NSObject {
 
             self.lastKnownOperator = .sncf
             self.cachedOperator = .sncf
+            self.routeProfile.load(journey: Self.journeyKey(details: details))
             self.cachedDataRemainingMB = nil
             self.cachedHasPosition = gps != nil
 
@@ -775,9 +794,16 @@ final class MenuBarController: NSObject {
                 theoricTime: formatTime(stop["theoricDate"] as? String) ?? "",
                 realTime: formatTime(stop["realDate"] as? String) ?? "",
                 delayMin: delay,
-                status: status
+                status: status,
+                elevationGainM: stopCoordinate(stop).flatMap { self.routeProfile.gain(at: $0) }
             )
         }
+
+        if let lat = currentLat, let lon = currentLon {
+            viewState.currentElevationGainM = routeProfile.gain(
+                at: CLLocationCoordinate2D(latitude: lat, longitude: lon))
+        }
+        viewState.totalElevationGainM = routeProfile.totalGain
 
         // Qualité WiFi
         if let stats = stats {
@@ -838,6 +864,15 @@ final class MenuBarController: NSObject {
 
     /// Articles qui font corps avec le nom de la gare : « Le Mans », « Les Aubrais », « La Roche ».
     private static let stationArticles: Set<String> = ["le", "la", "les", "l'"]
+
+    /// Coordonnées d'un arrêt telles que servies par l'API, `nil` si l'arrêt n'en porte pas.
+    private func stopCoordinate(_ stop: [String: Any]) -> CLLocationCoordinate2D? {
+        guard let coords = stop["coordinates"] as? [String: Any],
+              let lat = asDouble(coords["latitude"]),
+              let lon = asDouble(coords["longitude"]) else { return nil }
+        let coordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+        return CLLocationCoordinate2DIsValid(coordinate) ? coordinate : nil
+    }
 
     private func stationLocationText(_ name: String) -> String {
         let station = name.trimmingCharacters(in: .whitespacesAndNewlines)

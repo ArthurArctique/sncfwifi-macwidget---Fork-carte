@@ -94,6 +94,19 @@ final class TrainAPIClient {
         }
     }
 
+    /// Tracé seul, pour le profil altimétrique. Il ne change pas en cours de trajet : une seule
+    /// récupération suffit, inutile de solliciter les autres endpoints avec.
+    func fetchGraph(completion: @escaping ([String: Any]?) -> Void) {
+        if MockTrainData.shared.isEnabled {
+            MockTrainData.shared.fetchMapData { graph, _, _ in completion(graph) }
+            return
+        }
+
+        fetch(url: graphURL) { data in
+            DispatchQueue.main.async { completion(data) }
+        }
+    }
+
     /// Position seule. La carte la sonde à haute fréquence pour animer le déplacement : elle ne
     /// peut pas passer par `fetchMapData`, qui retéléchargerait le graphe complet à chaque appel.
     func fetchGPS(completion: @escaping ([String: Any]?) -> Void) {
