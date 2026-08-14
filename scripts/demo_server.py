@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import json
+import math
+import time
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Lock
@@ -26,9 +28,9 @@ STATE = {
     "minutesToNextStop": 6,
     "minutesToFinalStop": 22,
     "stops": [
-        {"id": "paris", "label": "Paris Gare de Lyon"},
-        {"id": "lyon", "label": "Lyon Part Dieu"},
-        {"id": "marseille", "label": "Marseille St-Charles"},
+        {"id": "paris", "label": "Paris Gare de Lyon", "latitude": 48.8443, "longitude": 2.3736},
+        {"id": "lyon", "label": "Lyon Part Dieu", "latitude": 45.7603, "longitude": 4.8596},
+        {"id": "marseille", "label": "Marseille St-Charles", "latitude": 43.3025, "longitude": 5.3806},
     ],
     # ── Eurostar / plateforme Icomora (ombord.info) ────────────────────────────
     "esSystemName": "eurostar-blue-main",
@@ -54,6 +56,109 @@ EUROSTAR_MODEM_OPERATORS = ["20820", "20801", "20810"]
 def iso_in(minutes):
     ts = datetime.now(timezone.utc) + timedelta(minutes=minutes)
     return ts.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+# ── Trajet simulé ─────────────────────────────────────────────────────────────
+# Suivi approximatif de la LGV Sud-Est, Paris → Lyon → Marseille. Le tracé sert à deux choses :
+# alimenter `train/graph` avec une vraie géométrie, et faire avancer la position GPS le long de
+# cette géométrie — c'est ce qui permet de tester le déplacement continu de la carte sans être
+# à bord.
+ROUTE_WAYPOINTS = [
+    (48.8443, 2.3736),   # Paris Gare de Lyon
+    (48.6100, 2.7500),
+    (48.3200, 3.0500),
+    (47.9000, 3.3800),
+    (47.5000, 3.8000),
+    (47.1500, 4.3000),
+    (46.9000, 4.7500),
+    (46.6000, 4.9500),
+    (46.2000, 4.9000),
+    (45.8500, 4.9000),
+    (45.7603, 4.8596),   # Lyon Part Dieu
+    (45.5000, 4.8200),
+    (45.0500, 4.8300),
+    (44.5000, 4.8000),
+    (44.1000, 4.8500),
+    (43.7000, 5.0500),
+    (43.4400, 5.2200),
+    (43.3025, 5.3806),   # Marseille St-Charles
+]
+
+POSITION_LOCK = Lock()
+
+
+def haversine(a, b):
+    """Distance en mètres entre deux couples (latitude, longitude)."""
+    radius = 6_371_000.0
+    lat1, lon1 = math.radians(a[0]), math.radians(a[1])
+    lat2, lon2 = math.radians(b[0]), math.radians(b[1])
+    inner = (math.sin((lat2 - lat1) / 2) ** 2
+             + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2)
+    return 2 * radius * math.asin(math.sqrt(inner))
+
+
+def densify(waypoints, step_m=2000.0):
+    """Insère des points intermédiaires pour approcher la densité d'un vrai graphe SNCF."""
+    points = [waypoints[0]]
+    for start, end in zip(waypoints, waypoints[1:]):
+        length = haversine(start, end)
+        steps = max(1, int(length // step_m))
+        for index in range(1, steps + 1):
+            ratio = index / steps
+            points.append((
+                start[0] + (end[0] - start[0]) * ratio,
+                start[1] + (end[1] - start[1]) * ratio,
+            ))
+    return points
+
+
+ROUTE_POINTS = densify(ROUTE_WAYPOINTS)
+ROUTE_CUMULATIVE = [0.0]
+for _previous, _current in zip(ROUTE_POINTS, ROUTE_POINTS[1:]):
+    ROUTE_CUMULATIVE.append(ROUTE_CUMULATIVE[-1] + haversine(_previous, _current))
+ROUTE_LENGTH = ROUTE_CUMULATIVE[-1]
+
+# Le train démarre à un tiers du parcours : ni en gare de départ, ni arrivé.
+TRAVELLED = ROUTE_LENGTH / 3.0
+LAST_TICK = time.monotonic()
+
+
+def point_at(distance):
+    """Coordonnées à `distance` mètres du départ, le long du tracé."""
+    distance = max(0.0, min(distance, ROUTE_LENGTH))
+    low, high = 0, len(ROUTE_CUMULATIVE) - 2
+    while low < high:
+        middle = (low + high + 1) // 2
+        if ROUTE_CUMULATIVE[middle] <= distance:
+            low = middle
+        else:
+            high = middle - 1
+
+    start, end = ROUTE_POINTS[low], ROUTE_POINTS[low + 1]
+    segment = ROUTE_CUMULATIVE[low + 1] - ROUTE_CUMULATIVE[low]
+    ratio = (distance - ROUTE_CUMULATIVE[low]) / segment if segment else 0.0
+    return (
+        start[0] + (end[0] - start[0]) * ratio,
+        start[1] + (end[1] - start[1]) * ratio,
+    )
+
+
+def advance_position(state):
+    """Avance le train le long du tracé depuis le dernier appel, à la vitesse courante.
+
+    L'intégration se fait à la demande plutôt que sur un timer : la carte sonde `train/gps` chaque
+    seconde, ce qui suffit à produire un déplacement régulier, et le serveur reste sans thread.
+    """
+    global TRAVELLED, LAST_TICK
+
+    at_station = state.get("stationStatus") == "station"
+    speed_ms = 0.0 if at_station else max(0, int(state.get("speed", 0))) / 3.6
+
+    with POSITION_LOCK:
+        now = time.monotonic()
+        TRAVELLED = (TRAVELLED + speed_ms * (now - LAST_TICK)) % ROUTE_LENGTH
+        LAST_TICK = now
+        return point_at(TRAVELLED), speed_ms
 
 
 def build_stops(state):
@@ -94,8 +199,8 @@ def build_stops(state):
                 "remainingDistance": 1000.0 * max(0, len(state["stops"]) - idx - 1),
             },
             "coordinates": {
-                "latitude": 48.0 - idx,
-                "longitude": 2.0 + idx,
+                "latitude": stop["latitude"],
+                "longitude": stop["longitude"],
             },
         })
     return out
@@ -107,11 +212,11 @@ def current_payloads():
         stops = build_stops(state)
 
     # L'API SNCF renvoie la vitesse en m/s ; le panneau la saisit en km/h.
-    speed_kmh = int(state.get("speed", 0)) if state.get("stationStatus") != "station" else 0
+    (latitude, longitude), speed_ms = advance_position(state)
     gps = {
-        "speed": round(speed_kmh / 3.6, 3),
-        "latitude": 47.0,
-        "longitude": 3.0,
+        "speed": round(speed_ms, 3),
+        "latitude": round(latitude, 6),
+        "longitude": round(longitude, 6),
     }
     progress = {
         "trainId": str(state.get("trainId", "9812")),
@@ -136,6 +241,14 @@ def current_payloads():
         "next_reset": next_reset_ms,
     }
     return gps, progress, bar, stats, status
+
+
+def build_graph():
+    """Le tracé servi par `train/graph` : une LineString, coordonnées en [longitude, latitude]."""
+    return {
+        "type": "LineString",
+        "coordinates": [[round(lon, 6), round(lat, 6)] for lat, lon in ROUTE_POINTS],
+    }
 
 
 def eurostar_payloads():
@@ -428,6 +541,9 @@ class Handler(BaseHTTPRequestHandler):
         # ── API SNCF (JSON nu) ────────────────────────────────────────────────
         gps, progress, bar, stats, status = current_payloads()
 
+        if path == "/router/api/train/graph":
+            self._json(200, build_graph())
+            return
         if path == "/router/api/train/gps":
             self._json(200, gps)
             return
