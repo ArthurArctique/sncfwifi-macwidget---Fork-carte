@@ -50,7 +50,7 @@ final class MenuBarController: NSObject {
     /// Source de la carte du trajet. Elle vit aussi longtemps que le contrôleur pour conserver le
     /// tracé déjà téléchargé d'une ouverture à l'autre ; seul son sondage démarre et s'arrête.
     private let mapModel = TrainMapModel()
-    private var showsMapObserver: AnyCancellable?
+    private var panelLayoutObserver: AnyCancellable?
 
     // Cache pour le redraw de l'icône sans appel API
     private var cachedArrivalDate: Date?
@@ -174,11 +174,14 @@ final class MenuBarController: NSObject {
                 .environmentObject(mapModel)
         )
 
-        // NSPopover ne suit pas d'elle-même le changement de gabarit entre le panneau et la carte :
-        // on lui pousse la taille calculée par SwiftUI au tour de boucle suivant.
-        showsMapObserver = store.$showsMap
-            .removeDuplicates()
-            .sink { [weak self] _ in
+        // NSPopover se dimensionne à la première présentation et ne remesure jamais son contenu.
+        // Or le panneau est encore vide à ce moment-là : sans ce réajustement, la bulle garde la
+        // taille de l'état « chargement » jusqu'au premier changement de gabarit. On lui pousse
+        // donc la taille calculée par SwiftUI dès que le contenu peut avoir changé — arrivée des
+        // données du train comme bascule vers la carte.
+        panelLayoutObserver = store.$showsMap.map { _ in }
+            .merge(with: store.$state.map { _ in })
+            .sink { [weak self] in
                 DispatchQueue.main.async { self?.resizePopoverToContent() }
             }
 
@@ -217,6 +220,8 @@ final class MenuBarController: NSObject {
             NSApp.activate(ignoringOtherApps: true)
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
+            // La vue n'a sa taille définitive qu'une fois montée dans la fenêtre du popover.
+            DispatchQueue.main.async { [weak self] in self?.resizePopoverToContent() }
         }
     }
 
