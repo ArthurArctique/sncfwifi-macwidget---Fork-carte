@@ -788,6 +788,9 @@ final class MenuBarController: NSObject {
 
     // MARK: - Helpers de construction
 
+    /// Articles qui font corps avec le nom de la gare : « Le Mans », « Les Aubrais », « La Roche ».
+    private static let stationArticles: Set<String> = ["le", "la", "les", "l'"]
+
     private func stationLocationText(_ name: String) -> String {
         let station = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let lowercased = station.lowercased()
@@ -826,12 +829,24 @@ final class MenuBarController: NSObject {
         ]
         if let short = exact[name] { return short }
         if name.count <= 15 { return name }
+
+        let words = name.split(separator: " ")
         // Nom long non répertorié : on garde le premier mot, qui est le plus souvent la ville
         // (ex. "Milano Porta Garibaldi" → "Milano", "Torino Porta Susa" → "Torino").
-        if let firstWord = name.split(separator: " ").first, firstWord.count >= 3, firstWord.lowercased() != "les" {
-            return String(firstWord)
+        // Quand ce premier mot est un article, il faut le suivant avec lui, sinon « Les Aubrais -
+        // Orléans » se réduirait à « Les ».
+        if let first = words.first {
+            if Self.stationArticles.contains(first.lowercased()) {
+                if words.count >= 2 { return "\(first) \(words[1])" }
+            } else if first.count >= 3 {
+                return String(first)
+            }
         }
-        return String(name.prefix(14)) + "…"
+
+        // Troncature de dernier recours. On retire la ponctuation de fin, sans quoi une coupure au
+        // milieu d'un nom composé laisse pendre un séparateur (« Les Aubrais - … »).
+        let truncated = name.prefix(14).trimmingCharacters(in: CharacterSet(charactersIn: " -–—,'"))
+        return truncated + "…"
     }
 
     // MARK: - Handlers
