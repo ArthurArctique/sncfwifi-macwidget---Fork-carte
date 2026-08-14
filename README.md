@@ -127,11 +127,18 @@ premier affichage d'une zone qui coûte, ensuite elles sont en cache.
 
 ### Barre des menus visible sur les Mac à encoche 🩹
 
+> Ce n'est pas un défaut introduit ici. Le comportement existe dans l'amont, et dans à peu près
+> toute app de barre des menus qui ne réserve pas sa position — il ne se déclenche que sur un Mac
+> à encoche dont la barre est déjà bien remplie. Le correctif tient dans un seul commit
+> ([`1804ad1`](https://github.com/ArthurArctique/sncfwifi-macwidget---Fork-carte/commit/1804ad1)),
+> volontairement isolé du reste pour pouvoir être proposé à l'amont tel quel.
+
 Sans position enregistrée, macOS pose un nouvel élément au premier emplacement libre en partant de
-la droite. Sur un MacBook à encoche dont la barre est déjà chargée, cet emplacement tombe **sous
+la droite. Quand la barre est chargée, sur un MacBook à encoche, cet emplacement tombe **sous
 l'encoche** : l'élément existe et reste cliquable, mais il est invisible, et le panneau semble
-surgir de la caméra. Mesuré sur un 13 pouces : encoche de x 646 à 825, premier emplacement libre à
-x 730–768.
+surgir de la caméra. Mesuré sur un 13 pouces avec une sonde neutre, sans code du projet : encoche
+de x 646 à 825, emplacement attribué à x 770–808. Aucune largeur d'icône n'y échappe, même un carré
+de 22 pt y tombe.
 
 L'élément réserve désormais sa place. Le déplacer avec **⌘ + glisser** reste prioritaire : macOS
 mémorise alors votre choix. Une trace au démarrage signale le cas où il finit malgré tout masqué :
