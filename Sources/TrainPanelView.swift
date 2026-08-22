@@ -192,6 +192,11 @@ private struct ConnectedView: View {
                     ElevationView(current: current, total: state.totalElevationGainM, accent: accent)
                 }
 
+                if !state.onboardServices.isEmpty {
+                    Divider()
+                    OnboardServicesView(codes: state.onboardServices, accent: accent)
+                }
+
                 if hasNetworkSection {
                     Divider()
                     if state.wifiQuality != nil || state.wifiDevices != nil {
@@ -388,6 +393,43 @@ private struct StopRowView: View {
             }
             .font(.system(size: 12))
             .padding(.bottom, isLast ? 0 : 12)
+        }
+    }
+}
+
+// MARK: - Services à bord
+
+private struct OnboardServicesView: View {
+    let codes: [String]
+    let accent: Color
+
+    private var services: [OnboardService] { OnboardService.list(from: codes) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Services à bord")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(.secondary)
+
+            // Repli à la ligne manuel : `LazyVGrid` adaptatif n'existe qu'à partir de macOS 12.
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                HStack(spacing: 14) {
+                    ForEach(row) { service in
+                        Image(systemName: service.symbolName)
+                            .font(.system(size: 14))
+                            .foregroundColor(accent)
+                            .help(service.label)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+    }
+
+    /// Quatre icônes par ligne : au-delà, elles se tassent dans les 300 pt du panneau.
+    private var rows: [[OnboardService]] {
+        stride(from: 0, to: services.count, by: 4).map {
+            Array(services[$0..<min($0 + 4, services.count)])
         }
     }
 }

@@ -825,6 +825,8 @@ final class MenuBarController: NSObject {
             )
         }
 
+        viewState.onboardServices = (details?["onboardServices"] as? [String]) ?? []
+
         if store.showsElevation {
             if let lat = currentLat, let lon = currentLon {
                 viewState.currentElevationGainM = routeProfile.gain(

@@ -48,6 +48,9 @@ struct TrainViewState {
     /// Dénivelé positif de l'ensemble du trajet, en mètres.
     var totalElevationGainM: Double?
 
+    /// Codes des services à bord annoncés par l'API (`OCEWF`, `OCEBA`…).
+    var onboardServices: [String] = []
+
     var wifiQuality: Int?      // 0…5
     var wifiDevices: Int?
 
