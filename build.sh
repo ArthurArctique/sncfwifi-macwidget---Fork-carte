@@ -21,7 +21,6 @@ SWIFT_SOURCES=(
     "${SRC_DIR}/EurostarStateBuilder.swift"
     "${SRC_DIR}/MenuBarController.swift"
     "${SRC_DIR}/MockTrainData.swift"
-    "${SRC_DIR}/OnboardServices.swift"
     "${SRC_DIR}/StatusBarImageGenerator.swift"
     "${SRC_DIR}/ElevationProfile.swift"
     "${SRC_DIR}/TrainMapModel.swift"
