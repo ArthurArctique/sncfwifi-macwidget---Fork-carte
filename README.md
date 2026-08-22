@@ -156,10 +156,23 @@ Deux précautions rendent le chiffre défendable :
 - le profil est **lissé sur 2 km**, parce que le RGE ALTI donne l'altitude du *sol* et non celle de
   la *voie* : sur une LGV, le train franchit les vallées en viaduc et les collines en tranchée.
 
-Mesuré sur 29 km de LGV réelle, le profil brut donnait 244 m de dénivelé là où le GPS du train en
-relevait 69 — un facteur 3,5. Après lissage à la même échelle, les deux sources concordent à 5 %
-près. Le dénivelé positif reste une grandeur dépendante de l'échelle : le même trajet donne 1 998 m
-avec une fenêtre de 1 km, 1 584 m à 2 km, 1 151 m à 5 km.
+Mesuré à bord sur 28 km de LGV, contre le GPS du train lui-même : à 2 km de fenêtre, le terrain
+surestime de **8 %** seulement (79 m contre 74 m), et à 3 km les deux sources se rejoignent. Le
+profil brut, lui, surestime de 73 %.
+
+La méthode reste faillible là où la voie s'affranchit du terrain : en tunnel et en tranchée
+profonde, le modèle grimpe la colline que le train traverse. Sur un Bruxelles → Marseille, cela
+concerne 1,9 % du tracé (sous les Alpilles, à l'entrée de Marseille), où le profil lissé affiche
+des pentes jusqu'à 102 ‰ alors qu'une LGV plafonne à 35 ‰.
+
+Le dénivelé positif reste par ailleurs une grandeur dépendante de l'échelle : le même trajet donne
+5 299 m avec une fenêtre de 1 km, 4 045 m à 2 km, 2 906 m à 5 km. Le chiffre affiché est donc une
+convention documentée, pas une mesure.
+
+> 🇫🇷 **Le RGE ALTI s'arrête aux frontières.** Un trajet qui commence à Bruxelles sort de son
+> emprise : les gares concernées n'affichent aucun dénivelé, et **aucun total n'est annoncé** tant
+> que le modèle ne couvre pas tout le trajet — mieux vaut ne rien dire que de compter 57 km comme
+> un plateau.
 
 Les coordonnées du trajet sont envoyées à l'IGN au moment du clic — c'est ce que ce bouton met sous
 votre contrôle.

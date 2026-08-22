@@ -32,11 +32,18 @@ struct ElevationProfile {
     let points: [CLLocationCoordinate2D]
     /// Altitude lissée à chaque point, en mètres.
     let altitudes: [Double]
-    /// Dénivelé positif cumulé depuis le départ, à chaque point.
+    /// Dénivelé positif cumulé depuis le départ, à chaque point couvert.
     let cumulativeGain: [Double]
+    /// Portion du tracé pour laquelle l'IGN a effectivement des données.
+    let covered: Range<Int>
 
-    /// Dénivelé positif total du trajet.
-    var totalGain: Double { cumulativeGain.last ?? 0 }
+    /// `true` si le modèle couvre tout le trajet. Faux dès qu'il en manque un bout — le RGE ALTI
+    /// est un modèle français, et un trajet qui commence à Bruxelles sort de son emprise.
+    var isComplete: Bool { covered.lowerBound == 0 && covered.upperBound == points.count }
+
+    /// Dénivelé positif total, `nil` si le modèle ne couvre pas tout le trajet : annoncer un total
+    /// qui ignore silencieusement 57 km serait pire que ne rien annoncer.
+    var totalGain: Double? { isComplete ? cumulativeGain.last : nil }
 
     /// Dénivelé positif cumulé depuis le départ jusqu'au point du tracé le plus proche.
     ///
@@ -44,7 +51,7 @@ struct ElevationProfile {
     /// gares sont à quelques dizaines de mètres du tracé, et le pas de 200 m rend la distinction
     /// sans effet sur le résultat.
     func gain(at coordinate: CLLocationCoordinate2D) -> Double? {
-        guard let index = nearestIndex(to: coordinate) else { return nil }
+        guard let index = nearestIndex(to: coordinate), covered.contains(index) else { return nil }
         return cumulativeGain[index]
     }
 
@@ -97,15 +104,38 @@ struct ElevationProfile {
         return samples
     }
 
-    /// Assemble le profil à partir des altitudes brutes renvoyées pour `points`.
-    static func make(points: [CLLocationCoordinate2D], rawAltitudes: [Double]) -> ElevationProfile? {
+    /// Assemble le profil. `rawAltitudes` porte `nil` là où le modèle n'a pas de donnée.
+    ///
+    /// Les trous internes sont comblés par interpolation entre leurs voisins valides ; les trous
+    /// de début et de fin, eux, ne peuvent pas l'être et sont déclarés non couverts plutôt que
+    /// remplis d'une valeur inventée.
+    static func make(points: [CLLocationCoordinate2D], rawAltitudes: [Double?]) -> ElevationProfile? {
         guard points.count == rawAltitudes.count, points.count >= 2 else { return nil }
+        guard let first = rawAltitudes.firstIndex(where: { $0 != nil }),
+              let last = rawAltitudes.lastIndex(where: { $0 != nil }),
+              last - first >= 1 else { return nil }
+
+        var filled = Array(rawAltitudes[first...last])
+        var cursor = 0
+        while cursor < filled.count {
+            guard filled[cursor] == nil else { cursor += 1; continue }
+            let gapStart = cursor
+            while cursor < filled.count && filled[cursor] == nil { cursor += 1 }
+            // Bornes garanties valides : les extrémités de `filled` le sont par construction.
+            let before = filled[gapStart - 1]!
+            let after = filled[cursor]!
+            let steps = cursor - gapStart + 1
+            for offset in 0..<(cursor - gapStart) {
+                filled[gapStart + offset] = before + (after - before) * Double(offset + 1) / Double(steps)
+            }
+        }
+        let values = filled.map { $0! }
 
         let half = max(1, Int((smoothingMeters / sampleSpacing / 2).rounded()))
         var smoothed: [Double] = []
-        smoothed.reserveCapacity(rawAltitudes.count)
-        for index in rawAltitudes.indices {
-            let window = rawAltitudes[max(0, index - half)...min(rawAltitudes.count - 1, index + half)]
+        smoothed.reserveCapacity(values.count)
+        for index in values.indices {
+            let window = values[max(0, index - half)...min(values.count - 1, index + half)]
             smoothed.append(window.reduce(0, +) / Double(window.count))
         }
 
@@ -114,7 +144,16 @@ struct ElevationProfile {
         for (a, b) in zip(smoothed, smoothed.dropFirst()) {
             gains.append(gains[gains.count - 1] + max(0, b - a))
         }
-        return ElevationProfile(points: points, altitudes: smoothed, cumulativeGain: gains)
+
+        // Les tableaux sont réalignés sur `points` : les bords non couverts portent des valeurs
+        // neutres, que `covered` empêche d'atteindre.
+        let leading = [Double](repeating: smoothed.first ?? 0, count: first)
+        let trailing = [Double](repeating: smoothed.last ?? 0, count: points.count - 1 - last)
+        return ElevationProfile(points: points,
+                                altitudes: leading + smoothed + trailing,
+                                cumulativeGain: [Double](repeating: 0, count: first) + gains
+                                    + [Double](repeating: gains.last ?? 0, count: trailing.count),
+                                covered: first..<(last + 1))
     }
 }
 
@@ -133,10 +172,11 @@ enum ElevationClient {
     private static let batchSize = 1_000
     private static let timeout: TimeInterval = 30
 
-    /// Altitudes de `points`, dans le même ordre. `nil` si une requête échoue : un profil partiel
-    /// donnerait un dénivelé faux, ce qui est pire que pas de dénivelé du tout.
+    /// Altitudes de `points`, dans le même ordre. Un élément vaut `nil` là où le modèle n'a pas
+    /// de donnée — le RGE ALTI est français et s'arrête à la frontière. Le résultat entier vaut
+    /// `nil` si une requête échoue : un profil tronqué donnerait un dénivelé faux.
     static func altitudes(for points: [CLLocationCoordinate2D],
-                          completion: @escaping ([Double]?) -> Void) {
+                          completion: @escaping ([Double?]?) -> Void) {
         guard !points.isEmpty else {
             DispatchQueue.main.async { completion([]) }
             return
@@ -147,7 +187,7 @@ enum ElevationClient {
         }
 
         let group = DispatchGroup()
-        var results = [Int: [Double]]()
+        var results = [Int: [Double?]]()
         let lock = NSLock()
 
         for (index, batch) in batches.enumerated() {
@@ -161,7 +201,7 @@ enum ElevationClient {
         }
 
         group.notify(queue: .main) {
-            var assembled: [Double] = []
+            var assembled: [Double?] = []
             for index in batches.indices {
                 guard let batch = results[index] else { completion(nil); return }
                 assembled += batch
@@ -171,7 +211,7 @@ enum ElevationClient {
     }
 
     private static func fetchBatch(_ points: [CLLocationCoordinate2D],
-                                   completion: @escaping ([Double]?) -> Void) {
+                                   completion: @escaping ([Double?]?) -> Void) {
         let body: [String: Any] = [
             "resource": "ign_rge_alti_wld",
             "lon": points.map { String(format: "%.6f", $0.longitude) }.joined(separator: ","),
@@ -198,12 +238,12 @@ enum ElevationClient {
                 return
             }
 
-            // Le service renvoie -99999 là où il n'a pas de donnée : on interpole plutôt que de
-            // laisser un trou, qui compterait comme une falaise dans le dénivelé.
-            var altitudes: [Double] = []
-            for entry in entries {
-                let value = asDouble(entry["z"]) ?? -99_999
-                altitudes.append(value > -1_000 ? value : (altitudes.last ?? 0))
+            // Le service renvoie -99999 hors de son emprise. On remonte l'absence telle quelle :
+            // la reboucher ici, sans voir les lots voisins, produisait un plateau à zéro sur
+            // toute la partie belge d'un Bruxelles vers Marseille.
+            let altitudes: [Double?] = entries.map { entry in
+                guard let value = asDouble(entry["z"]), value > -1_000 else { return nil }
+                return value
             }
             completion(altitudes.count == points.count ? altitudes : nil)
         }.resume()
@@ -258,8 +298,14 @@ final class RouteProfileStore {
 
                 self.profile = profile
                 self.loadedJourney = journey
-                NSLog("[SNCFWifi] Profil altimétrique chargé : %.0f m de D+ sur %d points.",
-                      profile.totalGain, samples.count)
+                if let total = profile.totalGain {
+                    NSLog("[SNCFWifi] Profil altimétrique chargé : %.0f m de D+ sur %d points.",
+                          total, samples.count)
+                } else {
+                    NSLog("[SNCFWifi] Profil altimétrique partiel : %d points couverts sur %d, "
+                          + "le trajet sort de l'emprise IGN. Aucun total annoncé.",
+                          profile.covered.count, samples.count)
+                }
                 self.onLoaded()
             }
         }

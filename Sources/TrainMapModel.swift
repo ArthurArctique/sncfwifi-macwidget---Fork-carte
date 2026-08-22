@@ -153,6 +153,13 @@ final class TrainMapModel: ObservableObject {
               let longitude = asDouble(payload["longitude"]) ?? asDouble(payload["lon"]) ?? asDouble(payload["lng"])
         else { return nil }
 
+        // Perte de fix : la rame renvoie `fix: -1` avec latitude, longitude et altitude à zéro,
+        // mais `success: true`. (0, 0) étant une coordonnée valide au large de l'Afrique,
+        // `CLLocationCoordinate2DIsValid` ne suffit pas — sans ce filtre le marqueur file vers
+        // le golfe de Guinée jusqu'au relevé suivant. Les fixes exploitables portent `fix` ≥ 1.
+        if let fix = asInt(payload["fix"]), fix < 1 { return nil }
+        if latitude == 0 && longitude == 0 { return nil }
+
         let coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
         guard CLLocationCoordinate2DIsValid(coordinate) else { return nil }
 
