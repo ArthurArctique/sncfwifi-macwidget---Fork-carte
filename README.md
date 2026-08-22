@@ -108,6 +108,14 @@ brew reinstall --cask sncfwifi
 
 ### Carte du trajet 🗺️
 
+<p align="center">
+  <img src="img/GIF_CARTE.gif" width="45%" />
+</p>
+
+<p align="center">
+  <em>Vue d'ensemble du trajet, puis suivi du train — TGV 9829 Bruxelles-Midi → Marseille</em>
+</p>
+
 Le bouton **Carte du trajet** remplace le contenu du panneau par une carte **MapKit** — pas une
 fenêtre à part. Le fond `mutedStandard` est celui qu'Apple destine aux données superposées, et le
 mode sombre suit le système.
